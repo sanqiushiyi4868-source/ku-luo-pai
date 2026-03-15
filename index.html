@@ -3,32 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>库洛牌 - 沉浸式环绕完全体 (去硬切版)</title>
+    <title>库洛牌 - 53牌完全体 (圆角视觉 & 魔法加载版)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: 'Courier New', Courier, monospace; }
         canvas { display: block; width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
         
-        #webcam-container { position: absolute; bottom: 20px; left: 20px; width: 160px; height: 120px; border: 2px solid #333; border-radius: 8px; overflow: hidden; background: #111; }
+        #webcam-container { position: absolute; bottom: 20px; left: 20px; width: 160px; height: 120px; border: 2px solid #a32946; border-radius: 8px; overflow: hidden; background: #111; z-index: 20; }
         #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } 
         
         #cursor-ring {
             position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
-            border: 2px solid #00ff00; border-radius: 50%; transform: translate(-50%, -50%);
+            border: 2px solid #ffcc66; border-radius: 50%; transform: translate(-50%, -50%);
             transition: width 0.15s, height 0.15s, background-color 0.15s;
-            box-shadow: 0 0 10px #00ff00; pointer-events: none; z-index: 100;
+            box-shadow: 0 0 10px #ffcc66; pointer-events: none; z-index: 100;
         }
-        #cursor-ring.pinched { width: 12px; height: 12px; background-color: rgba(0,255,0,0.8); box-shadow: 0 0 20px #00ff00; }
+        #cursor-ring.pinched { width: 12px; height: 12px; background-color: rgba(255,204,102,0.8); box-shadow: 0 0 20px #ffcc66; }
 
-        #history-tray { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 20; }
-        .history-card { width: 60px; height: 100px; background: #fff; border-radius: 4px; background-size: cover; border: 1px solid #fff; opacity: 0; transform: translateY(20px); animation: popUp 0.5s forwards; }
-        
-        #card-title { position: absolute; bottom: 180px; left: 50%; transform: translateX(-50%); font-size: 24px; font-weight: bold; text-shadow: 0 2px 10px rgba(255,255,255,0.8); opacity: 0; transition: opacity 0.3s; z-index: 20;}
-
+        #history-tray { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 20; max-width: 60%; flex-wrap: wrap-reverse; justify-content: center; }
+        .history-card { width: 45px; height: 105px; background: #fff; border-radius: 4px; background-size: cover; background-position: center; border: 1px solid #ffcc66; opacity: 0; transform: translateY(20px); animation: popUp 0.5s forwards; }
         @keyframes popUp { to { opacity: 1; transform: translateY(0); } }
         
-        #status-text { position: absolute; top: 20px; width: 100%; text-align: center; color: #aaa; font-size: 14px; z-index: 20; text-shadow: 0 0 5px #000; }
+        #status-text { position: absolute; top: 20px; width: 100%; text-align: center; color: #ffcc66; font-size: 14px; z-index: 20; text-shadow: 0 0 5px #000; font-family: sans-serif; letter-spacing: 1px;}
+
+        /* --- 史诗级加载界面 UI --- */
+        #loading-screen {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: rgba(5, 3, 8, 0.95); z-index: 200;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            transition: opacity 0.8s ease-in-out; pointer-events: auto;
+        }
+        #magic-circle-btn {
+            width: 150px; height: 150px;
+            border: 3px dashed #a32946; border-radius: 50%;
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer; position: relative;
+            animation: slowSpin 10s linear infinite; transition: all 0.3s;
+        }
+        #magic-circle-btn::before {
+            content: "✧"; position: absolute; font-size: 80px; color: #ffcc66;
+            transform: rotate(0deg); /* 抵消外层旋转让星星保持正向，或者一起转 */
+        }
+        #magic-circle-btn:hover { box-shadow: 0 0 30px rgba(255,204,102,0.6); transform: scale(1.05); border-color: #ffcc66;}
+        
+        #loading-text { margin-top: 40px; font-size: 20px; color: #ffcc66; letter-spacing: 4px; text-shadow: 0 0 10px #a32946; }
+        
+        @keyframes slowSpin { 100% { transform: rotate(360deg); } }
     </style>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -37,42 +58,132 @@
 </head>
 <body>
 
+    <div id="loading-screen">
+        <div id="magic-circle-btn" onclick="requestStart()"></div>
+        <div id="loading-text">库洛牌加载中 (0/54)...</div>
+    </div>
+
     <div id="ui-layer">
-        <div id="status-text">无缝物理环绕引擎启动中...</div>
+        <div id="status-text" style="display:none;">操作指南: 左右划动 = 旋转法阵 | 捏合 = 封印解除 | 松开 = 释放牌灵</div>
         <div id="cursor-ring"></div>
-        <div id="card-title"></div>
         <div id="webcam-container"><video id="webcam" autoplay playsinline></video></div>
         <div id="history-tray"></div>
     </div>
 
 <script>
-    // --- 0. 真·图片加载器 (这行绝招千万别删) ---
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('Anonymous'); 
+    // --- 加载状态管理 ---
+    let loadedCount = 0;
+    const totalToLoad = 54; // 53张正面 + 1张背面
+    let loadState = 'LOADING'; // LOADING, READY, PLAYING
 
-    // === 【第 1 步：放卡背】 ===
-    // 把下面引号里的中文，换成你“卡背图片”的网址
-    const backTexture = loader.load("https://github.com/sanqiushiyi4868-source/ku-luo-pai/blob/main/back.jpg?raw=true");
-
-    // === 【第 2 步：放正面】 ===
-    // 你有几张牌，就写几个 { }
-    const tarotData = [
-        { 
-            name: "风 (The Windy)", 
-            texture: loader.load("https://github.com/sanqiushiyi4868-source/ku-luo-pai/blob/main/windy.jpg?raw=true") 
-        },
-        { 
-            name: "火 (The Firey)", 
-            texture: loader.load("https://github.com/sanqiushiyi4868-source/ku-luo-pai/blob/main/Firey.jpg?raw=true") 
-        },
-        { 
-            name: "水 (The Watery)", 
-            texture: loader.load("https://github.com/sanqiushiyi4868-source/ku-luo-pai/blob/main/Watery.jpg?raw=true") 
+    function updateLoadStatus() {
+        loadedCount++;
+        const textEl = document.getElementById('loading-text');
+        if (loadState !== 'PLAYING') {
+            textEl.innerText = `收集卡牌中 (${loadedCount}/${totalToLoad})...`;
         }
+        if (loadedCount >= totalToLoad) {
+            loadState = 'READY';
+            textEl.innerText = "封印解除 (请点击或捏合法阵)";
+            document.getElementById('magic-circle-btn').style.borderColor = '#ffcc66';
+            document.getElementById('magic-circle-btn').style.boxShadow = '0 0 20px #ffcc66';
+        }
+    }
+
+    // 暴露给点击事件或捏合事件
+    window.requestStart = function() {
+        const textEl = document.getElementById('loading-text');
+        if (loadState === 'READY') {
+            loadState = 'PLAYING';
+            // 执行炫酷消失动画
+            const screen = document.getElementById('loading-screen');
+            screen.style.opacity = '0';
+            setTimeout(() => { 
+                screen.style.display = 'none'; 
+                document.getElementById('status-text').style.display = 'block';
+            }, 800);
+        } else if (loadState === 'LOADING') {
+            textEl.innerText = `正在拼命收集卡牌！请稍候 (${loadedCount}/${totalToLoad})...`;
+            textEl.style.color = '#ff6666';
+            setTimeout(() => { if(loadState === 'LOADING') textEl.style.color = '#ffcc66'; }, 1000);
+        }
+    }
+
+    // --- 图源与纹理加载 ---
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.setCrossOrigin('anonymous'); 
+    
+    const clowBackUrl = "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/back.jpg"; 
+    const backTexture = textureLoader.load(clowBackUrl, updateLoadStatus);
+    backTexture.minFilter = THREE.LinearFilter; 
+
+    const clowData = [
+        { name: "THE ARROW", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Arrow.jpg" },
+        { name: "THE BIG", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Big.jpg" },
+        { name: "THE BUBBLE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Bubble.jpg" },
+        { name: "THE CHANGE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Change.jpg" },
+        { name: "THE CLOUD", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Cloud.jpg" },
+        { name: "THE CREATE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Create.jpg" },
+        { name: "THE DARK", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Dark.jpg" },
+        { name: "THE DASH", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Dash.jpg" },
+        { name: "THE DREAM", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Dream.jpg" },
+        { name: "THE EARTHY", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Earthy.jpg" },
+        { name: "THE ERASE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Erase.jpg" },
+        { name: "THE FIGHT", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Fight.jpg" },
+        { name: "THE FIREY", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Firey.jpg" },
+        { name: "THE FLOAT", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Float.jpg" },
+        { name: "THE FLOWER", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Flower.jpg" },
+        { name: "THE FLY", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Fly.jpg" },
+        { name: "THE FREEZE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Freeze.jpg" },
+        { name: "THE GLOW", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Glow.jpg" },
+        { name: "THE ILLUSION", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Illusion.jpg" },
+        { name: "THE JUMP", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Jump.jpg" },
+        { name: "THE LIBRA", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Libra.jpg" },
+        { name: "THE LIGHT", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Light.jpg" },
+        { name: "THE LITTLE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Little.jpg" },
+        { name: "THE LOCK", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Lock.jpg" },
+        { name: "THE LOOP", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Loop.jpg" },
+        { name: "THE MAZE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Maze.jpg" },
+        { name: "THE MIRROR", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Mirror.jpg" },
+        { name: "THE MIST", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Mist.jpg" },
+        { name: "THE MOVE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Move.jpg" },
+        { name: "THE NOTHING", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Nothing.jpg" },
+        { name: "THE POWER", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Power.jpg" },
+        { name: "THE RETURN", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Return.jpg" },
+        { name: "THE SAND", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Sand.jpg" },
+        { name: "THE SHADOW", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Shadow.jpg" },
+        { name: "THE SHIELD", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Shield.jpg" },
+        { name: "THE SHOT", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Shot.jpg" },
+        { name: "THE SILENT", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Silent.jpg" },
+        { name: "THE SLEEP", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Sleep.jpg" },
+        { name: "THE SNOW", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Snow.jpg" },
+        { name: "THE SONG", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Song.jpg" },
+        { name: "THE STORM", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Storm.jpg" },
+        { name: "THE SWEET", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Sweet.jpg" },
+        { name: "THE SWORD", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Sword.jpg" },
+        { name: "THE THROUGH", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Through.jpg" },
+        { name: "THE THUNDER", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Thunder.jpg" },
+        { name: "THE TIME", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Time.jpg" },
+        { name: "THE TWIN", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Twin.jpg" },
+        { name: "THE VOICE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Voice.jpg" },
+        { name: "THE WATERY", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Watery.jpg" },
+        { name: "THE WAVE", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Wave.jpg" },
+        { name: "THE WINDY", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Windy.jpg" },
+        { name: "THE WOOD", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Wood.jpg" },
+        { name: "THE RAIN", url: "https://cdn.jsdelivr.net/gh/sanqiushiyi4868-source/ku-luo-pai@main/cards/Rain.jpg" }
+    ];
+
+    clowData.forEach(card => {
+        card.texture = textureLoader.load(card.url, updateLoadStatus);
+        card.texture.minFilter = THREE.LinearFilter;
+    });
+
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x050508);
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 0); // 用户始终处于宇宙中心！
+    scene.background = new THREE.Color(0x050308); 
+    
+    // 【核心重构1：缩小视场角(FOV)】 设为 35 度，强制镜头视野变窄，屏幕恰好只能装下 5 张牌
+    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -84,29 +195,56 @@
     const posArray = new Float32Array(starsCount * 3);
     for(let i = 0; i < starsCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 100;
     starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-    const starMesh = new THREE.Points(starsGeometry, new THREE.PointsMaterial({ size: 0.05, color: 0xffffff, transparent: true, opacity: 0.6 }));
+    const starMesh = new THREE.Points(starsGeometry, new THREE.PointsMaterial({ size: 0.05, color: 0xffcc66, transparent: true, opacity: 0.5 }));
     scene.add(starMesh);
 
-    // --- 极简圆柱体排列 ---
+    // 【核心重构2：生成圆角 Alpha 遮罩】 通过代码画一个圆角矩形，切割 3D 方块
+    function createRoundedAlphaMap() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512; canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000'; // 黑色部分变透明
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fff'; // 白色部分保留
+        
+        const r = 40; // 圆角半径
+        ctx.beginPath();
+        ctx.moveTo(r, 0); ctx.lineTo(canvas.width - r, 0); ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r);
+        ctx.lineTo(canvas.width, canvas.height - r); ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height);
+        ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
+        ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+        ctx.closePath();
+        ctx.fill();
+        
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.minFilter = THREE.LinearFilter;
+        return tex;
+    }
+    const roundedAlphaMap = createRoundedAlphaMap();
+
+    // --- 动态圆柱体排列 ---
     const cards = [];
-    const numCards = 12; // 【优化】增加到 12 张，让间距紧凑，一上来就能看到完美的弧线！
-    const cylinderRadius = 8.5; 
+    const numCards = clowData.length; 
+    
+    // 配合 FOV=35，固定一个较大的半径，保证卡牌不会重叠
+    const cylinderRadius = 22; 
 
     for(let i = 0; i < numCards; i++) {
-        const geometry = new THREE.BoxGeometry(2, 3.4, 0.05);
-        const edgeColor = new THREE.MeshBasicMaterial({ color: 0x222222 }); 
-        const frontMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: tarotData[i % tarotData.length].texture });
-        const backMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture });
+        const geometry = new THREE.BoxGeometry(1.6, 3.6, 0.015);
+        
+        // 挂载 alphaMap 并开启 alphaTest 剔除四个直角像素，完美实现纸牌圆角！
+        const frontMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: clowData[i].texture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
+        const backMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
+        const edgeColor = new THREE.MeshBasicMaterial({ color: 0xa32946 }); 
         
         const cardMesh = new THREE.Mesh(geometry, [edgeColor, edgeColor, edgeColor, edgeColor, frontMat, backMat]);
-        const edges = new THREE.EdgesGeometry(geometry);
-        cardMesh.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xdaa520, linewidth: 2 })));
-
+        
+        // 【视觉优化】移除了黄色硬线框（LineSegments），配合圆角切割，更像真实的纸牌
         scene.add(cardMesh);
 
         cards.push({
             mesh: cardMesh,
-            data: tarotData[i % tarotData.length],
+            data: clowData[i],
             index: i,
             targetScaleX: 1.0, targetScaleY: 1.0, targetScaleZ: 1.0,
             currentScaleX: 1.0, currentScaleY: 1.0, currentScaleZ: 1.0,
@@ -115,19 +253,38 @@
         });
     }
 
+    // --- 樱花特效 ---
+    function createSakuraPetal() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.beginPath();
+        ctx.moveTo(32, 60);
+        ctx.bezierCurveTo(5, 40, 5, 10, 32, 20); 
+        ctx.bezierCurveTo(59, 10, 59, 40, 32, 60); 
+        ctx.closePath();
+        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     
+        gradient.addColorStop(0.3, 'rgba(255, 183, 197, 1)');   
+        gradient.addColorStop(0.8, 'rgba(255, 140, 160, 0.6)'); 
+        gradient.addColorStop(1, 'rgba(255, 140, 160, 0)');     
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        return new THREE.CanvasTexture(canvas);
+    }
+    const sakuraTexture = createSakuraPetal();
     let explosionParticles = [];
     
     function explodeCard(cardObj) {
         const tray = document.getElementById('history-tray');
         const miniCard = document.createElement('div');
         miniCard.className = 'history-card';
-        miniCard.style.backgroundImage = `url(${cardObj.data.texture.image.toDataURL()})`;
+        miniCard.style.backgroundImage = `url(${cardObj.data.url})`;
         tray.appendChild(miniCard);
         
-        document.getElementById('card-title').style.opacity = '0';
         cardObj.mesh.visible = false;
         
-        const particleCount = 800; 
+        const particleCount = 600; 
         const particleGeo = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const velocities = [];
@@ -135,30 +292,38 @@
         cardObj.mesh.getWorldPosition(pos);
 
         for(let i = 0; i < particleCount; i++) {
-            positions[i*3] = pos.x + (Math.random()-0.5)*2;
-            positions[i*3+1] = pos.y + (Math.random()-0.5)*3.4;
-            positions[i*3+2] = pos.z + (Math.random()-0.5)*0.1;
-            velocities.push({ vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3, vz: (Math.random()-0.5)*0.3 });
+            positions[i*3] = pos.x + (Math.random()-0.5)*1.5;
+            positions[i*3+1] = pos.y + (Math.random()-0.5)*3.6;
+            positions[i*3+2] = pos.z + (Math.random()-0.5)*0.02;
+            velocities.push({ 
+                vx: (Math.random()-0.5)*0.5, 
+                vy: (Math.random()-0.5)*0.4 - 0.1, 
+                vz: (Math.random()-0.5)*0.5 
+            });
         }
         particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const pointMesh = new THREE.Points(particleGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.1, transparent: true, blending: THREE.AdditiveBlending }));
+        
+        const particleMat = new THREE.PointsMaterial({ 
+            color: 0xffffff, size: 0.35, map: sakuraTexture,
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending 
+        });
+        const pointMesh = new THREE.Points(particleGeo, particleMat);
         scene.add(pointMesh);
-        explosionParticles.push({ mesh: pointMesh, vels: velocities, life: 1.0 });
+        
+        explosionParticles.push({ mesh: pointMesh, vels: velocities, life: 1.2 });
 
         setTimeout(() => {
-            cardObj.data = tarotData[Math.floor(Math.random() * tarotData.length)]; 
+            cardObj.data = clowData[Math.floor(Math.random() * clowData.length)]; 
             cardObj.mesh.material[4].map = cardObj.data.texture; 
             cardObj.mesh.position.y = -10; 
             cardObj.mesh.visible = true;
             cardObj.state = 'IDLE'; 
-        }, 1000);
+        }, 1200);
     }
 
     const raycaster = new THREE.Raycaster();
     const pointerNDC = new THREE.Vector2(-999, -999); 
     const cursorRing = document.getElementById('cursor-ring');
-    const titleUI = document.getElementById('card-title');
-    const statusText = document.getElementById('status-text');
 
     let activeCard = null; 
     let wasPinching = false; 
@@ -171,7 +336,6 @@
 
     function onHandResults(results) {
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            statusText.innerText = "操作指南: 张开手掌左右划动 = 旋转转盘 | 捏合 = 抓取翻开 | 松开捏合 = 摧毁"; 
             const landmarks = results.multiHandLandmarks[0];
             
             const rawX = (1 - landmarks[8].x) * window.innerWidth;
@@ -189,10 +353,25 @@
             const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
             const isPinching = pinchDist < 0.05; 
 
+            // 【手势与加载按钮互动】
+            if (loadState !== 'PLAYING') {
+                const btn = document.getElementById('magic-circle-btn');
+                const rect = btn.getBoundingClientRect();
+                // 检查虚拟光标是否悬停在按钮上
+                if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
+                    btn.style.transform = 'scale(1.1)';
+                    if (isPinching && !wasPinching) requestStart();
+                } else {
+                    btn.style.transform = 'scale(1)';
+                }
+                wasPinching = isPinching;
+                return; // 还没进入游戏前，不执行背后的卡牌抓取逻辑
+            }
+
+            // 【游戏内逻辑】
             if (!isPinching) {
                 if (lastHandX !== null && !activeCard) {
                     let deltaX = pointerNDC.x - lastHandX;
-                    // 【优化】：滑动推力减半，让旋转更为沉重丝滑
                     angularVelocity += deltaX * 0.25; 
                 }
             }
@@ -208,15 +387,11 @@
                             if (intersects.length > 0) {
                                 activeCard = c;
                                 c.state = 'GRABBED';
-                                // 【抓取动画】：居中，拉到眼前 (Z=-4.5)，完全翻面
                                 c.targetX = 0; 
-                                c.targetZ = -4.5; 
+                                c.targetZ = -8; // 配合缩小的FOV，拉到 -8 距离最合适
                                 c.targetRotY = 0; 
                                 c.targetRotX = 0;
-                                // 【优化】：缩小百分之20
                                 c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.8; 
-                                
-                                titleUI.innerText = c.data.name; titleUI.style.opacity = '1';
                                 break;
                             }
                         }
@@ -256,9 +431,11 @@
 
         starMesh.rotation.y += delta * 0.05;
 
-        if (!activeCard) {
+        // 如果在游戏界面，自动加上非常轻微的缓慢自转
+        if (loadState === 'PLAYING' && !activeCard) {
             globalAngle += angularVelocity;
-            angularVelocity *= 0.90; // 阻尼，自然减速
+            angularVelocity *= 0.90; 
+            globalAngle += 0.001; // 魔法般的自动微转
         }
 
         const angleStep = (Math.PI * 2) / numCards;
@@ -267,14 +444,11 @@
             const c = cards[i];
             
             if (c.state === 'IDLE') {
-                // 回归纯粹的动力学算法，不再有任何“多此一举”的硬切！
                 let myAngle = globalAngle + (i * angleStep);
                 c.targetX = Math.sin(myAngle) * cylinderRadius;
                 c.targetZ = -Math.cos(myAngle) * cylinderRadius; 
-                c.targetRotY = myAngle + Math.PI; // 背面永远朝向中心的你
-                c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.2 : 0; // 轻微上下仰角
-                
-                // 确保空闲时缩放恢复 1.0
+                c.targetRotY = myAngle + Math.PI; 
+                c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.1 : 0; 
                 c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.0; 
             }
 
