@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>库洛牌 - 性能极致优化版 (视觉比例 & 轻便粒子优化)</title>
+    <title>库洛牌 - 多端控制版 (手势/鼠标/触摸)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: 'Courier New', Courier, monospace; }
         canvas { display: block; width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -62,7 +62,7 @@
     </div>
 
     <div id="ui-layer">
-        <div id="status-text" style="display:none;">操作指南: 左右划动 = 旋转法阵 | 捏合 = 盲盒抽取 | 松开 = 释放牌灵</div>
+        <div id="status-text" style="display:none;">操作指南: 拖拽/划动 = 旋转法阵 | 点击/捏合 = 抽取盲盒 | 松开 = 释放牌灵</div>
         <div id="cursor-ring"></div>
         <div id="webcam-container"><video id="webcam" autoplay playsinline></video></div>
         <div id="history-tray"></div>
@@ -173,9 +173,6 @@
             state: 'IDLE' 
         });
     }
-
-    // 【修改点2】对象池技术：更轻便、无造型的粉色粒子爆炸效果
-    // 完全删除原本的 createSakuraPetal 和其 Canvas 逻辑
     
     const poolParticleCount = 600; 
     const poolParticleGeo = new THREE.BufferGeometry();
@@ -184,12 +181,7 @@
     poolParticleGeo.setAttribute('position', new THREE.BufferAttribute(poolPositions, 3));
     
     const poolParticleMat = new THREE.PointsMaterial({ 
-        color: 0xffb6c1, // [修改] 浅粉色 (LightPink)
-        size: 0.12,     // [修改] 减小粒子尺寸，使其显得更轻便
-        // map: createSakuraPetal(), // [修改] 删除花瓣纹理，使用纯发光点
-        transparent: true, 
-        depthWrite: false, 
-        blending: THREE.AdditiveBlending 
+        color: 0xffb6c1, size: 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending 
     });
     
     const explosionSystem = new THREE.Points(poolParticleGeo, poolParticleMat);
@@ -238,79 +230,108 @@
     const pointerNDC = new THREE.Vector2(-999, -999); 
     const cursorRing = document.getElementById('cursor-ring');
 
+    // --- 统一交互状态 ---
     let activeCard = null; 
-    let wasPinching = false; 
+    let wasActionDown = false; 
     let cursorX = window.innerWidth / 2;
     let cursorY = window.innerHeight / 2;
-
     let globalAngle = 0;      
     let angularVelocity = 0;  
     let lastHandX = null;     
+    let currentInputSource = 'mouse'; // 记录当前输入源: 'hand', 'mouse', 'touch'
 
+    // 【新增】统一的输入处理核心逻辑
+    function processInput(rawX, rawY, isActionDown, source) {
+        currentInputSource = source;
+
+        // 1. 平滑坐标过渡
+        cursorX += (rawX - cursorX) * 0.3;
+        cursorY += (rawY - cursorY) * 0.3;
+
+        cursorRing.style.left = `${cursorX}px`; 
+        cursorRing.style.top = `${cursorY}px`;
+        pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1; 
+        pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
+
+        // 2. 加载页面的按钮交互
+        if (loadState !== 'PLAYING') {
+            const btn = document.getElementById('magic-circle-btn');
+            const rect = btn.getBoundingClientRect();
+            if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
+                btn.style.transform = 'scale(1.1)';
+                if (isActionDown && !wasActionDown) requestStart();
+            } else { 
+                btn.style.transform = 'scale(1)'; 
+            }
+            wasActionDown = isActionDown; 
+            return; 
+        }
+
+        // 3. 处理旋转逻辑 (根据不同终端优化习惯)
+        let shouldRotate = false;
+        if (source === 'hand' && !isActionDown) shouldRotate = true; // 手势：手掌张开平移时旋转
+        if (source === 'mouse' && !isActionDown) shouldRotate = true; // 鼠标：悬停平移时也可旋转(保持和手势体验一致)
+        if ((source === 'mouse' || source === 'touch') && isActionDown && !activeCard) shouldRotate = true; // 鼠标/触摸：按住空白处拖拽旋转
+
+        if (shouldRotate) {
+            if (lastHandX !== null && !activeCard) { 
+                angularVelocity += (pointerNDC.x - lastHandX) * 0.25; 
+            }
+        }
+
+        // 4. 处理抓取/释放逻辑
+        if (isActionDown && !wasActionDown) {
+            cursorRing.classList.add('pinched');
+            if (!activeCard) {
+                raycaster.setFromCamera(pointerNDC, camera);
+                for(let i=0; i<cards.length; i++){
+                    const c = cards[i];
+                    if (c.state === 'IDLE' && c.mesh.visible) {
+                        const intersects = raycaster.intersectObject(c.mesh);
+                        if (intersects.length > 0) {
+                            activeCard = c;
+                            c.state = 'GRABBED';
+                            c.targetX = 0; c.targetZ = -8; c.targetRotY = 0; c.targetRotX = 0;
+                            c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.3; 
+                            
+                            const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
+                            c.data = randomCard;
+                            c.mesh.material[4] = randomCard.material; 
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if (!isActionDown && wasActionDown) {
+            cursorRing.classList.remove('pinched');
+            if (activeCard) {
+                explodeCard(activeCard);
+                activeCard.state = 'DESTROYED';
+                activeCard = null;
+            }
+        }
+        
+        wasActionDown = isActionDown;
+        lastHandX = pointerNDC.x; 
+    }
+
+    // --- 摄像头/手势支持 ---
     function onHandResults(results) {
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const landmarks = results.multiHandLandmarks[0];
             const rawX = (1 - landmarks[8].x) * window.innerWidth;
             const rawY = landmarks[8].y * window.innerHeight;
-
-            cursorX += (rawX - cursorX) * 0.3;
-            cursorY += (rawY - cursorY) * 0.3;
-
-            cursorRing.style.left = `${cursorX}px`; cursorRing.style.top = `${cursorY}px`;
-            pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1; pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
-
             const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
             const isPinching = pinchDist < 0.05; 
 
-            if (loadState !== 'PLAYING') {
-                const btn = document.getElementById('magic-circle-btn');
-                const rect = btn.getBoundingClientRect();
-                if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
-                    btn.style.transform = 'scale(1.1)';
-                    if (isPinching && !wasPinching) requestStart();
-                } else { btn.style.transform = 'scale(1)'; }
-                wasPinching = isPinching; return; 
-            }
-
-            if (!isPinching) {
-                if (lastHandX !== null && !activeCard) { angularVelocity += (pointerNDC.x - lastHandX) * 0.25; }
-            }
-
-            if (isPinching && !wasPinching) {
-                cursorRing.classList.add('pinched');
-                if (!activeCard) {
-                    raycaster.setFromCamera(pointerNDC, camera);
-                    for(let i=0; i<cards.length; i++){
-                        const c = cards[i];
-                        if (c.state === 'IDLE' && c.mesh.visible) {
-                            const intersects = raycaster.intersectObject(c.mesh);
-                            if (intersects.length > 0) {
-                                activeCard = c;
-                                c.state = 'GRABBED';
-                                c.targetX = 0; c.targetZ = -8; c.targetRotY = 0; c.targetRotX = 0;
-                                // 【修改点1】翻转牌显得更大：从 0.8 增大到 1.3
-                                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.3; 
-                                
-                                const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
-                                c.data = randomCard;
-                                c.mesh.material[4] = randomCard.material; 
-                                break;
-                            }
-                        }
-                    }
-                }
-            } else if (!isPinching && wasPinching) {
-                cursorRing.classList.remove('pinched');
-                if (activeCard) {
-                    explodeCard(activeCard);
-                    activeCard.state = 'DESTROYED';
-                    activeCard = null;
-                }
-            }
-            wasPinching = isPinching;
-            lastHandX = pointerNDC.x; 
+            processInput(rawX, rawY, isPinching, 'hand');
         } else {
-            pointerNDC.set(-999, -999); cursorRing.style.left = `-100px`; lastHandX = null;
+            // 当手掌离开画面时的重置处理
+            if (currentInputSource === 'hand') {
+                pointerNDC.set(-999, -999); cursorRing.style.left = `-100px`; lastHandX = null;
+                // 如果手里正抓着牌但手丢了，自动放牌释放
+                if (wasActionDown) processInput(cursorX, cursorY, false, 'hand'); 
+            }
         }
     }
 
@@ -331,8 +352,42 @@
     });
     cameraUtils.start();
 
-    const clock = new THREE.Clock();
+    // --- 【新增】鼠标事件支持 ---
+    let isMouseDown = false;
+    window.addEventListener('mousedown', (e) => {
+        isMouseDown = true;
+        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+    });
+    window.addEventListener('mousemove', (e) => {
+        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+    });
+    window.addEventListener('mouseup', (e) => {
+        isMouseDown = false;
+        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+        lastHandX = null; // 松开后清空锚点防止瞬移
+    });
 
+    // --- 【新增】触摸屏事件支持 ---
+    let isTouchDown = false;
+    window.addEventListener('touchstart', (e) => {
+        isTouchDown = true;
+        const touch = e.touches[0];
+        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+        e.preventDefault(); // 阻止移动端拉扯页面滚动
+        const touch = e.touches[0];
+        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+    }, { passive: false });
+    window.addEventListener('touchend', (e) => {
+        isTouchDown = false;
+        const touch = e.changedTouches[0];
+        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+        lastHandX = null; // 松开后清空锚点防止瞬移
+    });
+
+    // --- 动画循环 ---
+    const clock = new THREE.Clock();
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
@@ -356,7 +411,6 @@
                 c.targetZ = -Math.cos(myAngle) * cylinderRadius; 
                 c.targetRotY = myAngle + Math.PI; 
                 c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.1 : 0; 
-                // 【修改点1】旋转牌圈变小一圈：从 1.0 调小到 0.65，让牌圈稀疏且小，产生深邃感
                 c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.65; 
             }
 
