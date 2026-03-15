@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>库洛牌 - 53牌完全体 (圆角视觉 & 魔法加载版)</title>
+    <title>库洛牌 - 性能极致优化版 (视觉比例 & 轻便粒子优化)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: 'Courier New', Courier, monospace; }
         canvas { display: block; width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -27,7 +27,6 @@
         
         #status-text { position: absolute; top: 20px; width: 100%; text-align: center; color: #ffcc66; font-size: 14px; z-index: 20; text-shadow: 0 0 5px #000; font-family: sans-serif; letter-spacing: 1px;}
 
-        /* --- 史诗级加载界面 UI --- */
         #loading-screen {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             background-color: rgba(5, 3, 8, 0.95); z-index: 200;
@@ -42,8 +41,7 @@
             animation: slowSpin 10s linear infinite; transition: all 0.3s;
         }
         #magic-circle-btn::before {
-            content: "✧"; position: absolute; font-size: 80px; color: #ffcc66;
-            transform: rotate(0deg); 
+            content: "✧"; position: absolute; font-size: 80px; color: #ffcc66; transform: rotate(0deg); 
         }
         #magic-circle-btn:hover { box-shadow: 0 0 30px rgba(255,204,102,0.6); transform: scale(1.05); border-color: #ffcc66;}
         
@@ -60,27 +58,27 @@
 
     <div id="loading-screen">
         <div id="magic-circle-btn" onclick="requestStart()"></div>
-        <div id="loading-text">库洛牌加载中 (0/54)...</div>
+        <div id="loading-text">牌库连接中 (0/54)...</div>
     </div>
 
     <div id="ui-layer">
-        <div id="status-text" style="display:none;">操作指南: 左右划动 = 旋转法阵 | 捏合 = 封印解除 | 松开 = 释放牌灵</div>
+        <div id="status-text" style="display:none;">操作指南: 左右划动 = 旋转法阵 | 捏合 = 盲盒抽取 | 松开 = 释放牌灵</div>
         <div id="cursor-ring"></div>
         <div id="webcam-container"><video id="webcam" autoplay playsinline></video></div>
         <div id="history-tray"></div>
     </div>
 
 <script>
-    // --- 加载状态管理 ---
+    // --- 状态管理 ---
     let loadedCount = 0;
-    const totalToLoad = 54; // 53张正面 + 1张背面
-    let loadState = 'LOADING'; // LOADING, READY, PLAYING
+    const totalToLoad = 54;
+    let loadState = 'LOADING'; 
 
     function updateLoadStatus() {
         loadedCount++;
         const textEl = document.getElementById('loading-text');
         if (loadState !== 'PLAYING') {
-            textEl.innerText = `收集卡牌中 (${loadedCount}/${totalToLoad})...`;
+            textEl.innerText = `魔力注入中 (${loadedCount}/${totalToLoad})...`;
         }
         if (loadedCount >= totalToLoad) {
             loadState = 'READY';
@@ -91,7 +89,6 @@
     }
 
     window.requestStart = function() {
-        const textEl = document.getElementById('loading-text');
         if (loadState === 'READY') {
             loadState = 'PLAYING';
             const screen = document.getElementById('loading-screen');
@@ -100,51 +97,55 @@
                 screen.style.display = 'none'; 
                 document.getElementById('status-text').style.display = 'block';
             }, 800);
-        } else if (loadState === 'LOADING') {
-            textEl.innerText = `正在拼命收集卡牌！请稍候 (${loadedCount}/${totalToLoad})...`;
-            textEl.style.color = '#ff6666';
-            setTimeout(() => { if(loadState === 'LOADING') textEl.style.color = '#ffcc66'; }, 1000);
         }
     }
 
     // --- 图源与纹理加载 ---
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin('anonymous'); 
-    
-    // 【核心修改1：提取公共 URL，并使用国内镜像】
     const baseUrl = "https://jsd.cdn.zzko.cn/gh/sanqiushiyi4868-source/ku-luo-pai@main/";
     
+    function createRoundedAlphaMap() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512; canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fff'; 
+        const r = 40; ctx.beginPath();
+        ctx.moveTo(r, 0); ctx.lineTo(canvas.width - r, 0); ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r);
+        ctx.lineTo(canvas.width, canvas.height - r); ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height);
+        ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
+        ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0); ctx.closePath(); ctx.fill();
+        const tex = new THREE.CanvasTexture(canvas); tex.minFilter = THREE.LinearFilter;
+        return tex;
+    }
+    const roundedAlphaMap = createRoundedAlphaMap();
+
     const clowBackUrl = baseUrl + "back.jpg"; 
     const backTexture = textureLoader.load(clowBackUrl, updateLoadStatus);
     backTexture.minFilter = THREE.LinearFilter; 
+    
+    const cardFiles = ["Arrow", "Big", "Bubble", "Change", "Cloud", "Create", "Dark", "Dash", "Dream", "Earthy", "Erase", "Fight", "Firey", "Float", "Flower", "Fly", "Freeze", "Glow", "Illusion", "Jump", "Libra", "Light", "Little", "Lock", "Loop", "Maze", "Mirror", "Mist", "Move", "Nothing", "Power", "Return", "Sand", "Shadow", "Shield", "Shot", "Silent", "Sleep", "Snow", "Song", "Storm", "Sweet", "Sword", "Through", "Thunder", "Time", "Twin", "Voice", "Watery", "Wave", "Windy", "Wood", "Rain"];
 
-    // 【核心修改2：用代码生成数组，减少重复的 URL 拼接】
-    const cardFiles = [
-        "Arrow", "Big", "Bubble", "Change", "Cloud", "Create", "Dark", "Dash", "Dream", "Earthy", "Erase", "Fight", "Firey", "Float", "Flower", "Fly", "Freeze", "Glow", "Illusion", "Jump", "Libra", "Light", "Little", "Lock", "Loop", "Maze", "Mirror", "Mist", "Move", "Nothing", "Power", "Return", "Sand", "Shadow", "Shield", "Shot", "Silent", "Sleep", "Snow", "Song", "Storm", "Sweet", "Sword", "Through", "Thunder", "Time", "Twin", "Voice", "Watery", "Wave", "Windy", "Wood", "Rain"
-    ];
-
-    const clowData = cardFiles.map(file => ({
-        name: `THE ${file.toUpperCase()}`,
-        url: `${baseUrl}cards/${file}.jpg`
-    }));
-
-    clowData.forEach(card => {
-        card.texture = textureLoader.load(card.url, updateLoadStatus);
-        card.texture.minFilter = THREE.LinearFilter;
+    const clowData = cardFiles.map(file => {
+        const obj = { name: `THE ${file.toUpperCase()}`, url: `${baseUrl}cards/${file}.jpg` };
+        obj.texture = textureLoader.load(obj.url, updateLoadStatus);
+        obj.texture.minFilter = THREE.LinearFilter;
+        obj.material = new THREE.MeshBasicMaterial({ color: 0xffffff, map: obj.texture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
+        return obj;
     });
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050308); 
-    
     const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
     document.body.appendChild(renderer.domElement);
 
-    const starsCount = 1000;
+    const starsCount = 500;
     const starsGeometry = new THREE.BufferGeometry();
     const posArray = new Float32Array(starsCount * 3);
     for(let i = 0; i < starsCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 100;
@@ -152,49 +153,20 @@
     const starMesh = new THREE.Points(starsGeometry, new THREE.PointsMaterial({ size: 0.05, color: 0xffcc66, transparent: true, opacity: 0.5 }));
     scene.add(starMesh);
 
-    function createRoundedAlphaMap() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 512; canvas.height = 1024;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#000'; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#fff'; 
-        
-        const r = 40; 
-        ctx.beginPath();
-        ctx.moveTo(r, 0); ctx.lineTo(canvas.width - r, 0); ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r);
-        ctx.lineTo(canvas.width, canvas.height - r); ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height);
-        ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
-        ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
-        ctx.closePath();
-        ctx.fill();
-        
-        const tex = new THREE.CanvasTexture(canvas);
-        tex.minFilter = THREE.LinearFilter;
-        return tex;
-    }
-    const roundedAlphaMap = createRoundedAlphaMap();
-
     const cards = [];
-    const numCards = clowData.length; 
-    
-    const cylinderRadius = 22; 
+    const displayCardCount = 18; 
+    const cylinderRadius = 8;    
 
-    for(let i = 0; i < numCards; i++) {
-        const geometry = new THREE.BoxGeometry(1.6, 3.6, 0.015);
-        
-        const frontMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: clowData[i].texture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
-        const backMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
-        const edgeColor = new THREE.MeshBasicMaterial({ color: 0xa32946 }); 
-        
-        const cardMesh = new THREE.Mesh(geometry, [edgeColor, edgeColor, edgeColor, edgeColor, frontMat, backMat]);
-        
+    const sharedGeometry = new THREE.BoxGeometry(1.6, 3.6, 0.015);
+    const sharedEdgeMat = new THREE.MeshBasicMaterial({ color: 0xa32946 });
+    const sharedBackMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
+
+    for(let i = 0; i < displayCardCount; i++) {
+        const cardMesh = new THREE.Mesh(sharedGeometry, [sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedBackMat, sharedBackMat]);
         scene.add(cardMesh);
 
         cards.push({
-            mesh: cardMesh,
-            data: clowData[i],
-            index: i,
+            mesh: cardMesh, data: null, index: i,
             targetScaleX: 1.0, targetScaleY: 1.0, targetScaleZ: 1.0,
             currentScaleX: 1.0, currentScaleY: 1.0, currentScaleZ: 1.0,
             targetX: 0, targetZ: 0, targetRotY: 0, targetRotX: 0,
@@ -202,28 +174,32 @@
         });
     }
 
-    function createSakuraPetal() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 64; canvas.height = 64;
-        const ctx = canvas.getContext('2d');
-        ctx.beginPath();
-        ctx.moveTo(32, 60);
-        ctx.bezierCurveTo(5, 40, 5, 10, 32, 20); 
-        ctx.bezierCurveTo(59, 10, 59, 40, 32, 60); 
-        ctx.closePath();
-        const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     
-        gradient.addColorStop(0.3, 'rgba(255, 183, 197, 1)');   
-        gradient.addColorStop(0.8, 'rgba(255, 140, 160, 0.6)'); 
-        gradient.addColorStop(1, 'rgba(255, 140, 160, 0)');     
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        return new THREE.CanvasTexture(canvas);
-    }
-    const sakuraTexture = createSakuraPetal();
-    let explosionParticles = [];
+    // 【修改点2】对象池技术：更轻便、无造型的粉色粒子爆炸效果
+    // 完全删除原本的 createSakuraPetal 和其 Canvas 逻辑
     
+    const poolParticleCount = 600; 
+    const poolParticleGeo = new THREE.BufferGeometry();
+    const poolPositions = new Float32Array(poolParticleCount * 3);
+    const poolVelocities = new Float32Array(poolParticleCount * 3);
+    poolParticleGeo.setAttribute('position', new THREE.BufferAttribute(poolPositions, 3));
+    
+    const poolParticleMat = new THREE.PointsMaterial({ 
+        color: 0xffb6c1, // [修改] 浅粉色 (LightPink)
+        size: 0.12,     // [修改] 减小粒子尺寸，使其显得更轻便
+        // map: createSakuraPetal(), // [修改] 删除花瓣纹理，使用纯发光点
+        transparent: true, 
+        depthWrite: false, 
+        blending: THREE.AdditiveBlending 
+    });
+    
+    const explosionSystem = new THREE.Points(poolParticleGeo, poolParticleMat);
+    explosionSystem.visible = false;
+    scene.add(explosionSystem);
+    let explosionLife = 0;
+
     function explodeCard(cardObj) {
+        if (!cardObj.data) return;
+        
         const tray = document.getElementById('history-tray');
         const miniCard = document.createElement('div');
         miniCard.className = 'history-card';
@@ -232,37 +208,26 @@
         
         cardObj.mesh.visible = false;
         
-        const particleCount = 600; 
-        const particleGeo = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const velocities = [];
         const pos = new THREE.Vector3();
         cardObj.mesh.getWorldPosition(pos);
 
-        for(let i = 0; i < particleCount; i++) {
-            positions[i*3] = pos.x + (Math.random()-0.5)*1.5;
-            positions[i*3+1] = pos.y + (Math.random()-0.5)*3.6;
-            positions[i*3+2] = pos.z + (Math.random()-0.5)*0.02;
-            velocities.push({ 
-                vx: (Math.random()-0.5)*0.5, 
-                vy: (Math.random()-0.5)*0.4 - 0.1, 
-                vz: (Math.random()-0.5)*0.5 
-            });
+        for(let i = 0; i < poolParticleCount; i++) {
+            const index = i * 3;
+            poolPositions[index] = pos.x + (Math.random()-0.5)*1.5;
+            poolPositions[index+1] = pos.y + (Math.random()-0.5)*3.6;
+            poolPositions[index+2] = pos.z + (Math.random()-0.5)*0.02;
+            
+            poolVelocities[index] = (Math.random()-0.5)*0.5;
+            poolVelocities[index+1] = (Math.random()-0.5)*0.4 - 0.1;
+            poolVelocities[index+2] = (Math.random()-0.5)*0.5;
         }
-        particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        
-        const particleMat = new THREE.PointsMaterial({ 
-            color: 0xffffff, size: 0.35, map: sakuraTexture,
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending 
-        });
-        const pointMesh = new THREE.Points(particleGeo, particleMat);
-        scene.add(pointMesh);
-        
-        explosionParticles.push({ mesh: pointMesh, vels: velocities, life: 1.2 });
+        explosionSystem.geometry.attributes.position.needsUpdate = true;
+        explosionSystem.visible = true;
+        explosionLife = 1.2;
 
         setTimeout(() => {
-            cardObj.data = clowData[Math.floor(Math.random() * clowData.length)]; 
-            cardObj.mesh.material[4].map = cardObj.data.texture; 
+            cardObj.data = null; 
+            cardObj.mesh.material[4] = sharedBackMat; 
             cardObj.mesh.position.y = -10; 
             cardObj.mesh.visible = true;
             cardObj.state = 'IDLE'; 
@@ -285,18 +250,14 @@
     function onHandResults(results) {
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const landmarks = results.multiHandLandmarks[0];
-            
             const rawX = (1 - landmarks[8].x) * window.innerWidth;
             const rawY = landmarks[8].y * window.innerHeight;
 
             cursorX += (rawX - cursorX) * 0.3;
             cursorY += (rawY - cursorY) * 0.3;
 
-            cursorRing.style.left = `${cursorX}px`;
-            cursorRing.style.top = `${cursorY}px`;
-
-            pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1;
-            pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
+            cursorRing.style.left = `${cursorX}px`; cursorRing.style.top = `${cursorY}px`;
+            pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1; pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
 
             const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
             const isPinching = pinchDist < 0.05; 
@@ -307,18 +268,12 @@
                 if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
                     btn.style.transform = 'scale(1.1)';
                     if (isPinching && !wasPinching) requestStart();
-                } else {
-                    btn.style.transform = 'scale(1)';
-                }
-                wasPinching = isPinching;
-                return; 
+                } else { btn.style.transform = 'scale(1)'; }
+                wasPinching = isPinching; return; 
             }
 
             if (!isPinching) {
-                if (lastHandX !== null && !activeCard) {
-                    let deltaX = pointerNDC.x - lastHandX;
-                    angularVelocity += deltaX * 0.25; 
-                }
+                if (lastHandX !== null && !activeCard) { angularVelocity += (pointerNDC.x - lastHandX) * 0.25; }
             }
 
             if (isPinching && !wasPinching) {
@@ -332,11 +287,13 @@
                             if (intersects.length > 0) {
                                 activeCard = c;
                                 c.state = 'GRABBED';
-                                c.targetX = 0; 
-                                c.targetZ = -8; 
-                                c.targetRotY = 0; 
-                                c.targetRotX = 0;
-                                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.8; 
+                                c.targetX = 0; c.targetZ = -8; c.targetRotY = 0; c.targetRotX = 0;
+                                // 【修改点1】翻转牌显得更大：从 0.8 增大到 1.3
+                                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.3; 
+                                
+                                const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
+                                c.data = randomCard;
+                                c.mesh.material[4] = randomCard.material; 
                                 break;
                             }
                         }
@@ -353,23 +310,27 @@
             wasPinching = isPinching;
             lastHandX = pointerNDC.x; 
         } else {
-            pointerNDC.set(-999, -999);
-            cursorRing.style.left = `-100px`;
-            lastHandX = null;
+            pointerNDC.set(-999, -999); cursorRing.style.left = `-100px`; lastHandX = null;
         }
     }
 
     const videoElement = document.getElementById('webcam');
-    
-    // 【核心修改3：手势识别模型的依赖文件也改为使用国内镜像加载】
     const hands = new Hands({locateFile: (file) => `https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(onHandResults);
 
-    const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 });
+    let lastHandProcessTime = 0;
+    const cameraUtils = new Camera(videoElement, { 
+        onFrame: async () => { 
+            const now = performance.now();
+            if (now - lastHandProcessTime < 60) return; 
+            lastHandProcessTime = now;
+            await hands.send({image: videoElement}); 
+        }, 
+        width: 640, height: 480 
+    });
     cameraUtils.start();
 
-    // --- 渲染引擎 ---
     const clock = new THREE.Clock();
 
     function animate() {
@@ -384,7 +345,7 @@
             globalAngle += 0.001; 
         }
 
-        const angleStep = (Math.PI * 2) / numCards;
+        const angleStep = (Math.PI * 2) / displayCardCount;
 
         for(let i=0; i<cards.length; i++){
             const c = cards[i];
@@ -395,7 +356,8 @@
                 c.targetZ = -Math.cos(myAngle) * cylinderRadius; 
                 c.targetRotY = myAngle + Math.PI; 
                 c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.1 : 0; 
-                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.0; 
+                // 【修改点1】旋转牌圈变小一圈：从 1.0 调小到 0.65，让牌圈稀疏且小，产生深邃感
+                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.65; 
             }
 
             if (c.state !== 'DESTROYED') {
@@ -415,19 +377,22 @@
             }
         }
 
-        explosionParticles = explosionParticles.filter(exp => {
-            exp.life -= delta * 1.5;
-            exp.mesh.material.opacity = Math.max(0, exp.life);
-            const positions = exp.mesh.geometry.attributes.position.array;
-            exp.vels.forEach((v, j) => {
-                positions[j*3]   += v.vx;
-                positions[j*3+1] += v.vy;
-                positions[j*3+2] += v.vz;
-            });
-            exp.mesh.geometry.attributes.position.needsUpdate = true;
-            if (exp.life <= 0) { scene.remove(exp.mesh); return false; }
-            return true;
-        });
+        if (explosionLife > 0) {
+            explosionLife -= delta * 1.5;
+            explosionSystem.material.opacity = Math.max(0, explosionLife);
+            
+            const count = poolPositions.length;
+            for(let j = 0; j < count; j += 3) {
+                poolPositions[j]   += poolVelocities[j];
+                poolPositions[j+1] += poolVelocities[j+1];
+                poolPositions[j+2] += poolVelocities[j+2];
+            }
+            explosionSystem.geometry.attributes.position.needsUpdate = true;
+            
+            if (explosionLife <= 0) {
+                explosionSystem.visible = false;
+            }
+        }
 
         renderer.render(scene, camera);
     }
