@@ -1,59 +1,188 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>库洛牌 - 多端控制版 (手势/鼠标/触摸)</title>
+    <title>幻境库洛牌 (Clow Cards 3D) - 沉浸式互动魔法阵</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
-        
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
-        
-        #webcam-container { position: absolute; bottom: 20px; left: 20px; width: 160px; height: 120px; border: 2px solid #a32946; border-radius: 8px; overflow: hidden; background: #111; z-index: 20; }
-        #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } 
-        
-        #cursor-ring {
-            position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
-            border: 2px solid #ffcc66; border-radius: 50%; transform: translate(-50%, -50%);
-            transition: width 0.15s, height 0.15s, background-color 0.15s;
-            box-shadow: 0 0 10px #ffcc66; pointer-events: none; z-index: 100;
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
         }
-        #cursor-ring.pinched { width: 12px; height: 12px; background-color: rgba(255,204,102,0.8); box-shadow: 0 0 20px #ffcc66; }
 
-        #history-tray { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 20; max-width: 60%; flex-wrap: wrap-reverse; justify-content: center; }
-        .history-card { width: 45px; height: 105px; background: #fff; border-radius: 4px; background-size: cover; background-position: center; border: 1px solid #ffcc66; opacity: 0; transform: translateY(20px); animation: popUp 0.5s forwards; }
-        @keyframes popUp { to { opacity: 1; transform: translateY(0); } }
-        
-        #status-text { position: absolute; top: 20px; width: 100%; text-align: center; color: #ffcc66; font-size: 14px; z-index: 20; text-shadow: 0 0 5px #000; font-family: sans-serif; letter-spacing: 1px;}
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #webcam-container {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 160px;
+            height: 120px;
+            border: 2px solid #a32946;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #111;
+            z-index: 20;
+        }
+
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #cursor-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 30px;
+            height: 30px;
+            border: 2px solid #ffcc66;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.15s, height 0.15s, background-color 0.15s;
+            box-shadow: 0 0 10px #ffcc66;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #cursor-ring.pinched {
+            width: 12px;
+            height: 12px;
+            background-color: rgba(255, 204, 102, 0.8);
+            box-shadow: 0 0 20px #ffcc66;
+        }
+
+        #history-tray {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 15px;
+            z-index: 20;
+            justify-content: flex-end;
+        }
+
+        .history-card {
+            width: 45px;
+            height: 105px;
+            background: #fff;
+            border-radius: 4px;
+            background-size: cover;
+            background-position: center;
+            border: 1px solid #ffcc66;
+            opacity: 0;
+            transform: translateY(20px);
+            animation: popUp 0.5s forwards;
+        }
+
+        @keyframes popUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        #status-text {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #ffcc66;
+            font-size: 14px;
+            z-index: 20;
+            text-shadow: 0 0 5px #000;
+            font-family: sans-serif;
+            letter-spacing: 1px;
+        }
 
         #loading-screen {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            background-color: rgba(5, 3, 8, 0.95); z-index: 200;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            transition: opacity 0.8s ease-in-out; pointer-events: auto;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(5, 3, 8, 0.95);
+            z-index: 200;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.8s ease-in-out;
+            pointer-events: auto;
         }
+
         #magic-circle-btn {
-            width: 150px; height: 150px;
-            border: 3px dashed #a32946; border-radius: 50%;
-            display: flex; justify-content: center; align-items: center;
-            cursor: pointer; position: relative;
-            animation: slowSpin 10s linear infinite; transition: all 0.3s;
+            width: 150px;
+            height: 150px;
+            border: 3px dashed #a32946;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            position: relative;
+            animation: slowSpin 10s linear infinite;
+            transition: all 0.3s;
         }
+
         #magic-circle-btn::before {
-            content: "✧"; position: absolute; font-size: 80px; color: #ffcc66; transform: rotate(0deg); 
+            content: "✧";
+            position: absolute;
+            font-size: 80px;
+            color: #ffcc66;
+            transform: rotate(0deg);
         }
-        #magic-circle-btn:hover { box-shadow: 0 0 30px rgba(255,204,102,0.6); transform: scale(1.05); border-color: #ffcc66;}
-        
-        #loading-text { margin-top: 40px; font-size: 20px; color: #ffcc66; letter-spacing: 4px; text-shadow: 0 0 10px #a32946; }
-        
-        @keyframes slowSpin { 100% { transform: rotate(360deg); } }
+
+        #magic-circle-btn:hover {
+            box-shadow: 0 0 30px rgba(255, 204, 102, 0.6);
+            transform: scale(1.05);
+            border-color: #ffcc66;
+        }
+
+        #loading-text {
+            margin-top: 40px;
+            font-size: 20px;
+            color: #ffcc66;
+            letter-spacing: 4px;
+            text-shadow: 0 0 10px #a32946;
+        }
+
+        @keyframes slowSpin {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
     </style>
-    
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
+
 <body>
 
     <div id="loading-screen">
@@ -68,397 +197,466 @@
         <div id="history-tray"></div>
     </div>
 
-<script>
-    // --- 状态管理 ---
-    let loadedCount = 0;
-    const totalToLoad = 54;
-    let loadState = 'LOADING'; 
+    <script>
+        // --- 状态管理 ---
+        let loadedCount = 0;
+        const totalToLoad = 54;
+        let loadState = 'LOADING';
 
-    function updateLoadStatus() {
-        loadedCount++;
-        const textEl = document.getElementById('loading-text');
-        if (loadState !== 'PLAYING') {
-            textEl.innerText = `魔力注入中 (${loadedCount}/${totalToLoad})...`;
+        function updateLoadStatus() {
+            loadedCount++;
+            const textEl = document.getElementById('loading-text');
+            if (loadState !== 'PLAYING') {
+                textEl.innerText = `魔力注入中 (${loadedCount}/${totalToLoad})...`;
+            }
+            if (loadedCount >= totalToLoad) {
+                loadState = 'READY';
+                textEl.innerText = "封印解除 (请点击或捏合法阵)";
+                document.getElementById('magic-circle-btn').style.borderColor = '#ffcc66';
+                document.getElementById('magic-circle-btn').style.boxShadow = '0 0 20px #ffcc66';
+            }
         }
-        if (loadedCount >= totalToLoad) {
-            loadState = 'READY';
-            textEl.innerText = "封印解除 (请点击或捏合法阵)";
-            document.getElementById('magic-circle-btn').style.borderColor = '#ffcc66';
-            document.getElementById('magic-circle-btn').style.boxShadow = '0 0 20px #ffcc66';
+
+        window.requestStart = function () {
+            if (loadState === 'READY') {
+                loadState = 'PLAYING';
+                const screen = document.getElementById('loading-screen');
+                screen.style.opacity = '0';
+
+                // 【卡顿优化】只需用到任意一张牌的材质即可编译主Shader，不用暴力渲染54张导致显卡超时崩溃
+                const compileGroup = new THREE.Group();
+                const dummyMesh = new THREE.Mesh(sharedGeometry, [
+                    sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, clowData[0].material, sharedBackMat
+                ]);
+                dummyMesh.frustumCulled = false;
+                compileGroup.add(dummyMesh);
+
+                scene.add(compileGroup);
+                explosionSystem.visible = true;
+                // 渲染一次即可预设着色器程序，其他牌通用该Shader
+                renderer.render(scene, camera);
+                scene.remove(compileGroup);
+                explosionSystem.visible = false;
+
+                setTimeout(() => {
+                    screen.style.display = 'none';
+                    document.getElementById('status-text').style.display = 'block';
+                }, 800);
+            }
         }
-    }
 
-    window.requestStart = function() {
-        if (loadState === 'READY') {
-            loadState = 'PLAYING';
-            const screen = document.getElementById('loading-screen');
-            screen.style.opacity = '0';
-            setTimeout(() => { 
-                screen.style.display = 'none'; 
-                document.getElementById('status-text').style.display = 'block';
-            }, 800);
+        // --- 图源与纹理加载 ---
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.setCrossOrigin('anonymous');
+        const baseUrl = "https://jsd.cdn.zzko.cn/gh/sanqiushiyi4868-source/ku-luo-pai@main/";
+
+        function createRoundedAlphaMap() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#fff';
+            const r = 40; ctx.beginPath();
+            ctx.moveTo(r, 0); ctx.lineTo(canvas.width - r, 0); ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r);
+            ctx.lineTo(canvas.width, canvas.height - r); ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height);
+            ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
+            ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0); ctx.closePath(); ctx.fill();
+            const tex = new THREE.CanvasTexture(canvas); tex.minFilter = THREE.LinearFilter;
+            return tex;
         }
-    }
+        const roundedAlphaMap = createRoundedAlphaMap();
 
-    // --- 图源与纹理加载 ---
-    const textureLoader = new THREE.TextureLoader();
-    textureLoader.setCrossOrigin('anonymous'); 
-    const baseUrl = "https://jsd.cdn.zzko.cn/gh/sanqiushiyi4868-source/ku-luo-pai@main/";
-    
-    function createRoundedAlphaMap() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 512; canvas.height = 1024;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#fff'; 
-        const r = 40; ctx.beginPath();
-        ctx.moveTo(r, 0); ctx.lineTo(canvas.width - r, 0); ctx.quadraticCurveTo(canvas.width, 0, canvas.width, r);
-        ctx.lineTo(canvas.width, canvas.height - r); ctx.quadraticCurveTo(canvas.width, canvas.height, canvas.width - r, canvas.height);
-        ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
-        ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0); ctx.closePath(); ctx.fill();
-        const tex = new THREE.CanvasTexture(canvas); tex.minFilter = THREE.LinearFilter;
-        return tex;
-    }
-    const roundedAlphaMap = createRoundedAlphaMap();
+        const clowBackUrl = baseUrl + "back.jpg";
+        const backTexture = textureLoader.load(clowBackUrl, updateLoadStatus);
+        backTexture.minFilter = THREE.LinearFilter;
 
-    const clowBackUrl = baseUrl + "back.jpg"; 
-    const backTexture = textureLoader.load(clowBackUrl, updateLoadStatus);
-    backTexture.minFilter = THREE.LinearFilter; 
-    
-    const cardFiles = ["Arrow", "Big", "Bubble", "Change", "Cloud", "Create", "Dark", "Dash", "Dream", "Earthy", "Erase", "Fight", "Firey", "Float", "Flower", "Fly", "Freeze", "Glow", "Illusion", "Jump", "Libra", "Light", "Little", "Lock", "Loop", "Maze", "Mirror", "Mist", "Move", "Nothing", "Power", "Return", "Sand", "Shadow", "Shield", "Shot", "Silent", "Sleep", "Snow", "Song", "Storm", "Sweet", "Sword", "Through", "Thunder", "Time", "Twin", "Voice", "Watery", "Wave", "Windy", "Wood", "Rain"];
+        const cardFiles = ["Arrow", "Big", "Bubble", "Change", "Cloud", "Create", "Dark", "Dash", "Dream", "Earthy", "Erase", "Fight", "Firey", "Float", "Flower", "Fly", "Freeze", "Glow", "Illusion", "Jump", "Libra", "Light", "Little", "Lock", "Loop", "Maze", "Mirror", "Mist", "Move", "Nothing", "Power", "Return", "Sand", "Shadow", "Shield", "Shot", "Silent", "Sleep", "Snow", "Song", "Storm", "Sweet", "Sword", "Through", "Thunder", "Time", "Twin", "Voice", "Watery", "Wave", "Windy", "Wood", "Rain"];
 
-    const clowData = cardFiles.map(file => {
-        const obj = { name: `THE ${file.toUpperCase()}`, url: `${baseUrl}cards/${file}.jpg` };
-        obj.texture = textureLoader.load(obj.url, updateLoadStatus);
-        obj.texture.minFilter = THREE.LinearFilter;
-        obj.material = new THREE.MeshBasicMaterial({ color: 0xffffff, map: obj.texture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
-        return obj;
-    });
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x050308); 
-    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
-    document.body.appendChild(renderer.domElement);
-
-    const starsCount = 500;
-    const starsGeometry = new THREE.BufferGeometry();
-    const posArray = new Float32Array(starsCount * 3);
-    for(let i = 0; i < starsCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 100;
-    starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-    const starMesh = new THREE.Points(starsGeometry, new THREE.PointsMaterial({ size: 0.05, color: 0xffcc66, transparent: true, opacity: 0.5 }));
-    scene.add(starMesh);
-
-    const cards = [];
-    const displayCardCount = 18; 
-    const cylinderRadius = 8;    
-
-    const sharedGeometry = new THREE.BoxGeometry(1.6, 3.6, 0.015);
-    const sharedEdgeMat = new THREE.MeshBasicMaterial({ color: 0xa32946 });
-    const sharedBackMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
-
-    for(let i = 0; i < displayCardCount; i++) {
-        const cardMesh = new THREE.Mesh(sharedGeometry, [sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedBackMat, sharedBackMat]);
-        scene.add(cardMesh);
-
-        cards.push({
-            mesh: cardMesh, data: null, index: i,
-            targetScaleX: 1.0, targetScaleY: 1.0, targetScaleZ: 1.0,
-            currentScaleX: 1.0, currentScaleY: 1.0, currentScaleZ: 1.0,
-            targetX: 0, targetZ: 0, targetRotY: 0, targetRotX: 0,
-            state: 'IDLE' 
+        const clowData = cardFiles.map(file => {
+            const obj = { name: `THE ${file.toUpperCase()}`, url: `${baseUrl}cards/${file}.jpg` };
+            obj.texture = textureLoader.load(obj.url, updateLoadStatus);
+            obj.texture.minFilter = THREE.LinearFilter;
+            obj.material = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                map: obj.texture,
+                alphaMap: roundedAlphaMap,
+                alphaTest: 0.5,
+                roughness: 0.4, // 缓和反光，避免过亮
+                metalness: 0.4  // 降低金属感，使发光不过于耀眼
+            });
+            return obj;
         });
-    }
-    
-    const poolParticleCount = 600; 
-    const poolParticleGeo = new THREE.BufferGeometry();
-    const poolPositions = new Float32Array(poolParticleCount * 3);
-    const poolVelocities = new Float32Array(poolParticleCount * 3);
-    poolParticleGeo.setAttribute('position', new THREE.BufferAttribute(poolPositions, 3));
-    
-    const poolParticleMat = new THREE.PointsMaterial({ 
-        color: 0xffb6c1, size: 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending 
-    });
-    
-    const explosionSystem = new THREE.Points(poolParticleGeo, poolParticleMat);
-    explosionSystem.visible = false;
-    scene.add(explosionSystem);
-    let explosionLife = 0;
 
-    function explodeCard(cardObj) {
-        if (!cardObj.data) return;
-        
-        const tray = document.getElementById('history-tray');
-        const miniCard = document.createElement('div');
-        miniCard.className = 'history-card';
-        miniCard.style.backgroundImage = `url(${cardObj.data.url})`;
-        tray.appendChild(miniCard);
-        
-        cardObj.mesh.visible = false;
-        
-        const pos = new THREE.Vector3();
-        cardObj.mesh.getWorldPosition(pos);
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050308);
+        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 0);
 
-        for(let i = 0; i < poolParticleCount; i++) {
-            const index = i * 3;
-            poolPositions[index] = pos.x + (Math.random()-0.5)*1.5;
-            poolPositions[index+1] = pos.y + (Math.random()-0.5)*3.6;
-            poolPositions[index+2] = pos.z + (Math.random()-0.5)*0.02;
-            
-            poolVelocities[index] = (Math.random()-0.5)*0.5;
-            poolVelocities[index+1] = (Math.random()-0.5)*0.4 - 0.1;
-            poolVelocities[index+2] = (Math.random()-0.5)*0.5;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const starsCount = 500;
+        const starsGeometry = new THREE.BufferGeometry();
+        const posArray = new Float32Array(starsCount * 3);
+        for (let i = 0; i < starsCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 100;
+        starsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const starMesh = new THREE.Points(starsGeometry, new THREE.PointsMaterial({ size: 0.05, color: 0xffcc66, transparent: true, opacity: 0.5 }));
+        // scene.add(starMesh); // 取消背景漂浮粒子
+
+        // 【新增】为主视图提供环境光及金边点光源
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const goldLight = new THREE.PointLight(0xffdea6, 0.8, 30);
+        goldLight.position.set(0, 0, 5);
+        scene.add(goldLight);
+
+        const cards = [];
+        const displayCardCount = 18;
+        const cylinderRadius = 8;
+
+        const sharedGeometry = new THREE.BoxGeometry(1.6, 3.6, 0.02); // 稍微调薄一点，避免隐藏侧面后产生明显断层
+        const sharedEdgeMat = new THREE.MeshBasicMaterial({ color: 0xa32946, visible: false }); // 直接隐藏侧面，消除突兀边界红线
+        const sharedBackMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: backTexture, alphaMap: roundedAlphaMap, alphaTest: 0.5 });
+
+        for (let i = 0; i < displayCardCount; i++) {
+            const cardMesh = new THREE.Mesh(sharedGeometry, [sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedBackMat, sharedBackMat]);
+            scene.add(cardMesh);
+
+            cards.push({
+                mesh: cardMesh, data: null, index: i,
+                targetScaleX: 1.0, targetScaleY: 1.0, targetScaleZ: 1.0,
+                currentScaleX: 1.0, currentScaleY: 1.0, currentScaleZ: 1.0,
+                targetX: 0, targetZ: 0, targetRotY: 0, targetRotX: 0,
+                state: 'IDLE'
+            });
         }
-        explosionSystem.geometry.attributes.position.needsUpdate = true;
-        explosionSystem.visible = true;
-        explosionLife = 1.2;
 
-        setTimeout(() => {
-            cardObj.data = null; 
-            cardObj.mesh.material[4] = sharedBackMat; 
-            cardObj.mesh.position.y = -10; 
-            cardObj.mesh.visible = true;
-            cardObj.state = 'IDLE'; 
-        }, 1200);
-    }
+        const poolParticleCount = 600;
+        const poolParticleGeo = new THREE.BufferGeometry();
+        const poolPositions = new Float32Array(poolParticleCount * 3);
+        const poolVelocities = new Float32Array(poolParticleCount * 3);
+        poolParticleGeo.setAttribute('position', new THREE.BufferAttribute(poolPositions, 3));
 
-    const raycaster = new THREE.Raycaster();
-    const pointerNDC = new THREE.Vector2(-999, -999); 
-    const cursorRing = document.getElementById('cursor-ring');
+        const poolParticleMat = new THREE.PointsMaterial({
+            color: 0xffb6c1, size: 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+        });
 
-    // --- 统一交互状态 ---
-    let activeCard = null; 
-    let wasActionDown = false; 
-    let cursorX = window.innerWidth / 2;
-    let cursorY = window.innerHeight / 2;
-    let globalAngle = 0;      
-    let angularVelocity = 0;  
-    let lastHandX = null;     
-    let currentInputSource = 'mouse'; // 记录当前输入源: 'hand', 'mouse', 'touch'
+        const explosionSystem = new THREE.Points(poolParticleGeo, poolParticleMat);
+        explosionSystem.frustumCulled = false; // 修复：防止因预渲染空坐标而被视锥体提前裁剪
+        explosionSystem.visible = false;
+        scene.add(explosionSystem);
+        let explosionLife = 0;
 
-    // 【新增】统一的输入处理核心逻辑
-    function processInput(rawX, rawY, isActionDown, source) {
-        currentInputSource = source;
+        function explodeCard(cardObj) {
+            if (!cardObj.data) return;
 
-        // 1. 平滑坐标过渡
-        cursorX += (rawX - cursorX) * 0.3;
-        cursorY += (rawY - cursorY) * 0.3;
+            cardObj.mesh.visible = false;
 
-        cursorRing.style.left = `${cursorX}px`; 
-        cursorRing.style.top = `${cursorY}px`;
-        pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1; 
-        pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
+            // 延迟一点进行DOM重绘，避免与粒子密集计算挤在同一帧导致微卡顿
+            setTimeout(() => {
+                const tray = document.getElementById('history-tray');
+                const miniCard = document.createElement('div');
+                miniCard.className = 'history-card';
+                miniCard.style.backgroundImage = `url(${cardObj.data.url})`;
+                tray.appendChild(miniCard);
 
-        // 2. 加载页面的按钮交互
-        if (loadState !== 'PLAYING') {
-            const btn = document.getElementById('magic-circle-btn');
-            const rect = btn.getBoundingClientRect();
-            if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
-                btn.style.transform = 'scale(1.1)';
-                if (isActionDown && !wasActionDown) requestStart();
-            } else { 
-                btn.style.transform = 'scale(1)'; 
+                // 最多显示3张前面的卡牌
+                while (tray.children.length > 3) {
+                    tray.removeChild(tray.firstChild);
+                }
+            }, 50);
+
+            const pos = new THREE.Vector3();
+            cardObj.mesh.getWorldPosition(pos);
+
+            for (let i = 0; i < poolParticleCount; i++) {
+                const index = i * 3;
+                poolPositions[index] = pos.x + (Math.random() - 0.5) * 1.5;
+                poolPositions[index + 1] = pos.y + (Math.random() - 0.5) * 3.6;
+                poolPositions[index + 2] = pos.z + (Math.random() - 0.5) * 0.02;
+
+                poolVelocities[index] = (Math.random() - 0.5) * 0.5;
+                poolVelocities[index + 1] = (Math.random() - 0.5) * 0.4 - 0.1;
+                poolVelocities[index + 2] = (Math.random() - 0.5) * 0.5;
             }
-            wasActionDown = isActionDown; 
-            return; 
+            explosionSystem.geometry.attributes.position.needsUpdate = true;
+            explosionSystem.visible = true;
+            explosionLife = 1.2;
+
+            setTimeout(() => {
+                cardObj.data = null;
+                cardObj.mesh.material[4] = sharedBackMat;
+                cardObj.mesh.position.y = -10;
+                cardObj.mesh.visible = true;
+                cardObj.state = 'IDLE';
+            }, 1200);
         }
 
-        // 3. 处理旋转逻辑 (根据不同终端优化习惯)
-        let shouldRotate = false;
-        if (source === 'hand' && !isActionDown) shouldRotate = true; // 手势：手掌张开平移时旋转
-        if (source === 'mouse' && !isActionDown) shouldRotate = true; // 鼠标：悬停平移时也可旋转(保持和手势体验一致)
-        if ((source === 'mouse' || source === 'touch') && isActionDown && !activeCard) shouldRotate = true; // 鼠标/触摸：按住空白处拖拽旋转
+        const raycaster = new THREE.Raycaster();
+        const pointerNDC = new THREE.Vector2(-999, -999);
+        const cursorRing = document.getElementById('cursor-ring');
 
-        if (shouldRotate) {
-            if (lastHandX !== null && !activeCard) { 
-                angularVelocity += (pointerNDC.x - lastHandX) * 0.25; 
+        // --- 统一交互状态 ---
+        let activeCard = null;
+        let wasActionDown = false;
+        let cursorX = window.innerWidth / 2;
+        let cursorY = window.innerHeight / 2;
+        let globalAngle = 0;
+        let angularVelocity = 0;
+        let lastHandX = null;
+        let currentInputSource = 'mouse'; // 记录当前输入源: 'hand', 'mouse', 'touch'
+
+        // 【新增】统一的输入处理核心逻辑
+        function processInput(rawX, rawY, isActionDown, source) {
+            currentInputSource = source;
+
+            // 1. 平滑坐标过渡
+            cursorX += (rawX - cursorX) * 0.3;
+            cursorY += (rawY - cursorY) * 0.3;
+
+            cursorRing.style.left = `${cursorX}px`;
+            cursorRing.style.top = `${cursorY}px`;
+            pointerNDC.x = (cursorX / window.innerWidth) * 2 - 1;
+            pointerNDC.y = -(cursorY / window.innerHeight) * 2 + 1;
+
+            // 2. 加载页面的按钮交互
+            if (loadState !== 'PLAYING') {
+                const btn = document.getElementById('magic-circle-btn');
+                const rect = btn.getBoundingClientRect();
+                if (cursorX > rect.left && cursorX < rect.right && cursorY > rect.top && cursorY < rect.bottom) {
+                    btn.style.transform = 'scale(1.1)';
+                    if (isActionDown && !wasActionDown) requestStart();
+                } else {
+                    btn.style.transform = 'scale(1)';
+                }
+                wasActionDown = isActionDown;
+                return;
             }
-        }
 
-        // 4. 处理抓取/释放逻辑
-        if (isActionDown && !wasActionDown) {
-            cursorRing.classList.add('pinched');
-            if (!activeCard) {
-                raycaster.setFromCamera(pointerNDC, camera);
-                for(let i=0; i<cards.length; i++){
-                    const c = cards[i];
-                    if (c.state === 'IDLE' && c.mesh.visible) {
-                        const intersects = raycaster.intersectObject(c.mesh);
-                        if (intersects.length > 0) {
-                            activeCard = c;
-                            c.state = 'GRABBED';
-                            c.targetX = 0; c.targetZ = -8; c.targetRotY = 0; c.targetRotX = 0;
-                            c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.3; 
-                            
-                            const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
-                            c.data = randomCard;
-                            c.mesh.material[4] = randomCard.material; 
-                            break;
+            // 3. 处理旋转逻辑 (根据不同终端优化习惯)
+            let shouldRotate = false;
+            if (source === 'hand' && !isActionDown) shouldRotate = true; // 手势：手掌张开平移时旋转
+            if (source === 'mouse' && !isActionDown) shouldRotate = true; // 鼠标：悬停平移时也可旋转(保持和手势体验一致)
+            if ((source === 'mouse' || source === 'touch') && isActionDown && !activeCard) shouldRotate = true; // 鼠标/触摸：按住空白处拖拽旋转
+
+            if (shouldRotate) {
+                if (lastHandX !== null && !activeCard) {
+                    angularVelocity += (pointerNDC.x - lastHandX) * 0.25;
+                }
+            }
+
+            // 4. 处理抓取/释放逻辑
+            if (isActionDown && !wasActionDown) {
+                cursorRing.classList.add('pinched');
+                if (!activeCard) {
+                    raycaster.setFromCamera(pointerNDC, camera);
+                    for (let i = 0; i < cards.length; i++) {
+                        const c = cards[i];
+                        if (c.state === 'IDLE' && c.mesh.visible) {
+                            const intersects = raycaster.intersectObject(c.mesh);
+                            if (intersects.length > 0) {
+                                activeCard = c;
+                                c.state = 'GRABBED';
+                                // 【修改】不再锁死目标坐标角度，由 animate 循环动态更新流光效果
+                                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 1.17; // 稍微小10%
+
+                                const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
+                                c.data = randomCard;
+                                c.mesh.material = [sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, randomCard.material, sharedBackMat];
+                                break;
+                            }
                         }
                     }
                 }
+            } else if (!isActionDown && wasActionDown) {
+                cursorRing.classList.remove('pinched');
+                if (activeCard) {
+                    explodeCard(activeCard);
+                    activeCard.state = 'DESTROYED';
+                    activeCard = null;
+                }
             }
-        } else if (!isActionDown && wasActionDown) {
-            cursorRing.classList.remove('pinched');
+
+            wasActionDown = isActionDown;
+            lastHandX = pointerNDC.x;
+        }
+
+        // --- 摄像头/手势支持 ---
+        let handLostFrames = 0;
+        let isHandPinching = false;
+        function onHandResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handLostFrames = 0; // 重置丢失计数
+                const landmarks = results.multiHandLandmarks[0];
+                const rawX = (1 - landmarks[8].x) * window.innerWidth;
+                const rawY = landmarks[8].y * window.innerHeight;
+                const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
+
+                // 动态阈值(迟滞)防抖：捏合判断严格一点，松开要求距离更远
+                if (!isHandPinching && pinchDist < 0.04) {
+                    isHandPinching = true;
+                } else if (isHandPinching && pinchDist > 0.08) {
+                    isHandPinching = false;
+                }
+
+                processInput(rawX, rawY, isHandPinching, 'hand');
+            } else {
+                // 增加丢帧容忍，避免因手部移动太快导致识别模糊掉帧而意外释放
+                handLostFrames++;
+                if (handLostFrames > 5) {
+                    if (currentInputSource === 'hand') {
+                        pointerNDC.set(-999, -999); cursorRing.style.left = `-100px`; lastHandX = null;
+                        if (wasActionDown) processInput(cursorX, cursorY, false, 'hand');
+                        isHandPinching = false;
+                    }
+                }
+            }
+        }
+
+        const videoElement = document.getElementById('webcam');
+        const hands = new Hands({ locateFile: (file) => `https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onHandResults);
+
+        let lastHandProcessTime = 0;
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                const now = performance.now();
+                if (now - lastHandProcessTime < 60) return;
+                lastHandProcessTime = now;
+                await hands.send({ image: videoElement });
+            },
+            width: 640, height: 480
+        });
+        cameraUtils.start();
+
+        // --- 【新增】鼠标事件支持 ---
+        let isMouseDown = false;
+        window.addEventListener('mousedown', (e) => {
+            isMouseDown = true;
+            processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+        });
+        window.addEventListener('mousemove', (e) => {
+            processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+        });
+        window.addEventListener('mouseup', (e) => {
+            isMouseDown = false;
+            processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
+            lastHandX = null; // 松开后清空锚点防止瞬移
+        });
+
+        // --- 【新增】触摸屏事件支持 ---
+        let isTouchDown = false;
+        window.addEventListener('touchstart', (e) => {
+            isTouchDown = true;
+            const touch = e.touches[0];
+            processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+        }, { passive: false });
+        window.addEventListener('touchmove', (e) => {
+            e.preventDefault(); // 阻止移动端拉扯页面滚动
+            const touch = e.touches[0];
+            processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+        }, { passive: false });
+        window.addEventListener('touchend', (e) => {
+            isTouchDown = false;
+            const touch = e.changedTouches[0];
+            processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
+            lastHandX = null; // 松开后清空锚点防止瞬移
+        });
+
+        // --- 动画循环 ---
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            starMesh.rotation.y += delta * 0.05;
+
+            if (loadState === 'PLAYING' && !activeCard) {
+                globalAngle += angularVelocity;
+                angularVelocity *= 0.90;
+                globalAngle += 0.001;
+            }
+
+            const angleStep = (Math.PI * 2) / displayCardCount;
+
+            for (let i = 0; i < cards.length; i++) {
+                const c = cards[i];
+
+                if (c.state === 'IDLE') {
+                    let myAngle = globalAngle + (i * angleStep);
+                    c.targetX = Math.sin(myAngle) * cylinderRadius;
+                    c.targetZ = -Math.cos(myAngle) * cylinderRadius;
+                    c.targetRotY = myAngle + Math.PI;
+                    c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.1 : 0;
+                    c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.65;
+                } else if (c.state === 'GRABBED') {
+                    // 【金边互动特效】随手指/鼠标小幅度平移和偏转，联动光源产生高级的闪卡金属反光现象
+                    c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.3 : 0;
+                    c.targetRotY = (pointerNDC.x !== -999 && pointerNDC.x !== null) ? pointerNDC.x * 0.4 : 0;
+                    c.targetX = (pointerNDC.x !== -999 && pointerNDC.x !== null) ? pointerNDC.x * 1.5 : 0;
+                    // c.targetZ 保持近景便于观察
+                    c.targetZ = -7;
+                }
+
+                if (c.state !== 'DESTROYED') {
+                    c.mesh.position.x += (c.targetX - c.mesh.position.x) * 0.1;
+                    c.mesh.position.z += (c.targetZ - c.mesh.position.z) * 0.1;
+                    c.mesh.position.y += ((0) - c.mesh.position.y) * 0.1;
+                    c.mesh.rotation.x += (c.targetRotX - c.mesh.rotation.x) * 0.1;
+
+                    let diffY = c.targetRotY - c.mesh.rotation.y;
+                    diffY = Math.atan2(Math.sin(diffY), Math.cos(diffY));
+                    c.mesh.rotation.y += diffY * 0.1;
+
+                    c.currentScaleX += (c.targetScaleX - c.currentScaleX) * 0.1;
+                    c.currentScaleY += (c.targetScaleY - c.currentScaleY) * 0.1;
+                    c.currentScaleZ += (c.targetScaleZ - c.currentScaleZ) * 0.1;
+                    c.mesh.scale.set(c.currentScaleX, c.currentScaleY, c.currentScaleZ);
+                }
+            }
+
+            // 【新增】金光追随互动逻辑，鼠标/手指移动时高光扫过金属材质引发酷炫的金边/渐变反射
             if (activeCard) {
-                explodeCard(activeCard);
-                activeCard.state = 'DESTROYED';
-                activeCard = null;
+                goldLight.position.x += ((pointerNDC.x !== -999 ? pointerNDC.x : 0) * 8 - goldLight.position.x) * 0.1;
+                goldLight.position.y += ((pointerNDC.y !== -999 ? pointerNDC.y : 0) * 8 - goldLight.position.y) * 0.1;
+            } else {
+                goldLight.position.x += (0 - goldLight.position.x) * 0.1;
+                goldLight.position.y += (0 - goldLight.position.y) * 0.1;
             }
-        }
-        
-        wasActionDown = isActionDown;
-        lastHandX = pointerNDC.x; 
-    }
 
-    // --- 摄像头/手势支持 ---
-    function onHandResults(results) {
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const landmarks = results.multiHandLandmarks[0];
-            const rawX = (1 - landmarks[8].x) * window.innerWidth;
-            const rawY = landmarks[8].y * window.innerHeight;
-            const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
-            const isPinching = pinchDist < 0.05; 
+            if (explosionLife > 0) {
+                explosionLife -= delta * 1.5;
+                explosionSystem.material.opacity = Math.max(0, explosionLife);
 
-            processInput(rawX, rawY, isPinching, 'hand');
-        } else {
-            // 当手掌离开画面时的重置处理
-            if (currentInputSource === 'hand') {
-                pointerNDC.set(-999, -999); cursorRing.style.left = `-100px`; lastHandX = null;
-                // 如果手里正抓着牌但手丢了，自动放牌释放
-                if (wasActionDown) processInput(cursorX, cursorY, false, 'hand'); 
+                const count = poolPositions.length;
+                for (let j = 0; j < count; j += 3) {
+                    poolPositions[j] += poolVelocities[j];
+                    poolPositions[j + 1] += poolVelocities[j + 1];
+                    poolPositions[j + 2] += poolVelocities[j + 2];
+                }
+                explosionSystem.geometry.attributes.position.needsUpdate = true;
+
+                if (explosionLife <= 0) {
+                    explosionSystem.visible = false;
+                }
             }
-        }
-    }
 
-    const videoElement = document.getElementById('webcam');
-    const hands = new Hands({locateFile: (file) => `https://jsd.cdn.zzko.cn/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    hands.onResults(onHandResults);
-
-    let lastHandProcessTime = 0;
-    const cameraUtils = new Camera(videoElement, { 
-        onFrame: async () => { 
-            const now = performance.now();
-            if (now - lastHandProcessTime < 60) return; 
-            lastHandProcessTime = now;
-            await hands.send({image: videoElement}); 
-        }, 
-        width: 640, height: 480 
-    });
-    cameraUtils.start();
-
-    // --- 【新增】鼠标事件支持 ---
-    let isMouseDown = false;
-    window.addEventListener('mousedown', (e) => {
-        isMouseDown = true;
-        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
-    });
-    window.addEventListener('mousemove', (e) => {
-        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
-    });
-    window.addEventListener('mouseup', (e) => {
-        isMouseDown = false;
-        processInput(e.clientX, e.clientY, isMouseDown, 'mouse');
-        lastHandX = null; // 松开后清空锚点防止瞬移
-    });
-
-    // --- 【新增】触摸屏事件支持 ---
-    let isTouchDown = false;
-    window.addEventListener('touchstart', (e) => {
-        isTouchDown = true;
-        const touch = e.touches[0];
-        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
-    }, { passive: false });
-    window.addEventListener('touchmove', (e) => {
-        e.preventDefault(); // 阻止移动端拉扯页面滚动
-        const touch = e.touches[0];
-        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
-    }, { passive: false });
-    window.addEventListener('touchend', (e) => {
-        isTouchDown = false;
-        const touch = e.changedTouches[0];
-        processInput(touch.clientX, touch.clientY, isTouchDown, 'touch');
-        lastHandX = null; // 松开后清空锚点防止瞬移
-    });
-
-    // --- 动画循环 ---
-    const clock = new THREE.Clock();
-    function animate() {
-        requestAnimationFrame(animate);
-        const delta = clock.getDelta();
-
-        starMesh.rotation.y += delta * 0.05;
-
-        if (loadState === 'PLAYING' && !activeCard) {
-            globalAngle += angularVelocity;
-            angularVelocity *= 0.90; 
-            globalAngle += 0.001; 
+            renderer.render(scene, camera);
         }
 
-        const angleStep = (Math.PI * 2) / displayCardCount;
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 500);
 
-        for(let i=0; i<cards.length; i++){
-            const c = cards[i];
-            
-            if (c.state === 'IDLE') {
-                let myAngle = globalAngle + (i * angleStep);
-                c.targetX = Math.sin(myAngle) * cylinderRadius;
-                c.targetZ = -Math.cos(myAngle) * cylinderRadius; 
-                c.targetRotY = myAngle + Math.PI; 
-                c.targetRotX = (pointerNDC.y !== -999 && pointerNDC.y !== null) ? pointerNDC.y * 0.1 : 0; 
-                c.targetScaleX = c.targetScaleY = c.targetScaleZ = 0.65; 
-            }
-
-            if (c.state !== 'DESTROYED') {
-                c.mesh.position.x += (c.targetX - c.mesh.position.x) * 0.1;
-                c.mesh.position.z += (c.targetZ - c.mesh.position.z) * 0.1;
-                c.mesh.position.y += ((0) - c.mesh.position.y) * 0.1;
-                c.mesh.rotation.x += (c.targetRotX - c.mesh.rotation.x) * 0.1;
-                
-                let diffY = c.targetRotY - c.mesh.rotation.y;
-                diffY = Math.atan2(Math.sin(diffY), Math.cos(diffY));
-                c.mesh.rotation.y += diffY * 0.1;
-
-                c.currentScaleX += (c.targetScaleX - c.currentScaleX) * 0.1;
-                c.currentScaleY += (c.targetScaleY - c.currentScaleY) * 0.1;
-                c.currentScaleZ += (c.targetScaleZ - c.currentScaleZ) * 0.1;
-                c.mesh.scale.set(c.currentScaleX, c.currentScaleY, c.currentScaleZ);
-            }
-        }
-
-        if (explosionLife > 0) {
-            explosionLife -= delta * 1.5;
-            explosionSystem.material.opacity = Math.max(0, explosionLife);
-            
-            const count = poolPositions.length;
-            for(let j = 0; j < count; j += 3) {
-                poolPositions[j]   += poolVelocities[j];
-                poolPositions[j+1] += poolVelocities[j+1];
-                poolPositions[j+2] += poolVelocities[j+2];
-            }
-            explosionSystem.geometry.attributes.position.needsUpdate = true;
-            
-            if (explosionLife <= 0) {
-                explosionSystem.visible = false;
-            }
-        }
-
-        renderer.render(scene, camera);
-    }
-
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 500);
-
-    animate();
-</script>
+        animate();
+    </script>
 </body>
+
 </html>
