@@ -19,6 +19,8 @@
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
     const CARD_WORLD_WIDTH = 1.6;
     const CARD_WORLD_HEIGHT = 3.6;
+    const CARD_WORLD_DEPTH = 0.075;
+    const RELEASE_BURST_LIGHT_MS = 820;
     const HAS_COARSE_POINTER = window.matchMedia("(pointer: coarse)").matches;
     const HAND_FRAME_INTERVAL = HAS_COARSE_POINTER ? 118 : 92;
     const HAND_SAMPLE_WIDTH = HAS_COARSE_POINTER ? 224 : 256;
@@ -108,7 +110,10 @@
         slowFrames: 0,
         degradationLevel: 0,
         longTaskCount: 0,
-        lastLongTaskReportAt: 0
+        lastLongTaskReportAt: 0,
+        revealLightUntil: 0,
+        lastReleaseAt: 0,
+        lastExplosionDelayMs: 0
     };
 
     function setStatus(text, tone = "normal") {
@@ -199,8 +204,8 @@
                 label: "移动",
                 cards: 14,
                 activeCards: 14,
-                particles: 480,
-                activeParticles: 480,
+                particles: 520,
+                activeParticles: 520,
                 cherryParticles: 680,
                 activeCherryParticles: 680,
                 pixelRatio: 1.25,
@@ -216,8 +221,8 @@
             label: "高画质",
             cards: 18,
             activeCards: 18,
-            particles: 760,
-            activeParticles: 760,
+            particles: 920,
+            activeParticles: 920,
             cherryParticles: 1100,
             activeCherryParticles: 1100,
             pixelRatio: 1.65,
@@ -351,6 +356,8 @@
     let raycaster;
     let pointerNDC;
     let goldLight;
+    let cursorGlow;
+    let cursorGlowMaterial;
     let magicCircle;
     let explosionSystem;
     let cherrySystem;
@@ -373,12 +380,15 @@
                 file,
                 url: texture.userData.sourceUrl || `${ASSET_BASE}/cards/${file}.webp`,
                 texture,
-                material: new THREE.MeshBasicMaterial({
+                material: new THREE.MeshStandardMaterial({
                     color: 0xffffff,
                     map: texture,
                     alphaMap: roundedAlphaMap,
                     alphaTest: 0.5,
-                    side: THREE.DoubleSide
+                    roughness: 0.56,
+                    metalness: 0.04,
+                    emissive: 0x16060c,
+                    emissiveIntensity: 0.08
                 })
             };
         });
@@ -413,9 +423,25 @@
         fill.position.set(0, -2, -8);
         scene.add(fill);
 
-        goldLight = new THREE.PointLight(0xffdea6, 1.1, 32);
+        goldLight = new THREE.PointLight(0xffd27a, 1.25, 30, 1.7);
         goldLight.position.set(0, 1, 4);
         scene.add(goldLight);
+
+        cursorGlowMaterial = new THREE.SpriteMaterial({
+            map: createCursorGlowTexture(),
+            color: 0xffd27a,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending
+        });
+        cursorGlow = new THREE.Sprite(cursorGlowMaterial);
+        cursorGlow.position.set(0, 1, 2.2);
+        cursorGlow.scale.set(2.2, 2.2, 1);
+        cursorGlow.renderOrder = 6;
+        cursorGlow.visible = false;
+        scene.add(cursorGlow);
     }
 
     function setupStars() {
@@ -450,6 +476,30 @@
         gradient.addColorStop(1, "rgba(255, 170, 210, 0)");
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 128, 128);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.encoding = THREE.sRGBEncoding;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        return texture;
+    }
+
+    function createCursorGlowTexture() {
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext("2d");
+        const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 124);
+        gradient.addColorStop(0, "rgba(255, 249, 224, 0.95)");
+        gradient.addColorStop(0.18, "rgba(255, 214, 105, 0.72)");
+        gradient.addColorStop(0.48, "rgba(255, 178, 38, 0.22)");
+        gradient.addColorStop(1, "rgba(255, 178, 38, 0)");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = "rgba(255, 229, 146, 0.38)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(128, 128, 46, 0, Math.PI * 2);
+        ctx.stroke();
         const texture = new THREE.CanvasTexture(canvas);
         texture.encoding = THREE.sRGBEncoding;
         texture.minFilter = THREE.LinearFilter;
@@ -697,14 +747,23 @@
 
     function setupCards(backTexture, cardsLoaded) {
         clowData = cardsLoaded;
-        sharedGeometry = new THREE.BoxGeometry(CARD_WORLD_WIDTH, CARD_WORLD_HEIGHT, 0.02);
-        sharedEdgeMat = new THREE.MeshBasicMaterial({ color: 0xa32946, visible: false });
-        sharedBackMat = new THREE.MeshBasicMaterial({
+        sharedGeometry = new THREE.BoxGeometry(CARD_WORLD_WIDTH, CARD_WORLD_HEIGHT, CARD_WORLD_DEPTH);
+        sharedEdgeMat = new THREE.MeshStandardMaterial({
+            color: 0x7b1830,
+            roughness: 0.46,
+            metalness: 0.22,
+            emissive: 0x240611,
+            emissiveIntensity: 0.14
+        });
+        sharedBackMat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
             map: backTexture,
             alphaMap: roundedAlphaMap,
             alphaTest: 0.5,
-            side: THREE.DoubleSide
+            roughness: 0.52,
+            metalness: 0.05,
+            emissive: 0x17070d,
+            emissiveIntensity: 0.07
         });
 
         cards = [];
@@ -890,6 +949,12 @@
             return;
         }
 
+        const now = performance.now();
+        if (state.lastReleaseAt) {
+            state.lastExplosionDelayMs = Math.max(0, Math.round(now - state.lastReleaseAt));
+        }
+        state.revealLightUntil = Math.max(state.revealLightUntil, now + RELEASE_BURST_LIGHT_MS * 0.65);
+
         const releasedCard = cardObj.data;
         setStatus(`${cardObj.data.name} 已释放`);
         cardObj.mesh.visible = false;
@@ -899,7 +964,7 @@
 
         explosionSystem.position.copy(pos);
         explosionSystem.geometry.setDrawRange(0, quality.activeParticles);
-        explosionStartedAt = performance.now() * 0.001;
+        explosionStartedAt = now * 0.001;
         explosionMaterial.uniforms.uStartTime.value = explosionStartedAt;
         explosionMaterial.uniforms.uTime.value = explosionStartedAt;
         explosionSystem.visible = true;
@@ -920,10 +985,13 @@
         if (cardObj.state !== "GRABBED") {
             return;
         }
+        const now = performance.now();
         cardObj.state = "REVEALED";
-        cardObj.revealUntil = performance.now() + 680;
+        cardObj.revealUntil = now + 360;
+        state.lastReleaseAt = now;
+        state.revealLightUntil = now + RELEASE_BURST_LIGHT_MS;
         setStatus(`${cardObj.data.name} 显现中`);
-        window.setTimeout(() => explodeCard(cardObj), 680);
+        window.requestAnimationFrame(() => explodeCard(cardObj));
     }
 
     function grabCard(card) {
@@ -1789,6 +1857,17 @@
         }
     }
 
+    function pointerLightTarget() {
+        const x = pointerNDC.x !== -999 ? pointerNDC.x : 0;
+        const y = pointerNDC.y !== -999 ? pointerNDC.y : 0;
+        const horizontalReach = Math.min(7.2, Math.max(4.4, camera.aspect * 4.6));
+        return {
+            x: x * horizontalReach,
+            y: y * 4.6,
+            z: 3.4
+        };
+    }
+
     function updateEffects(delta, now) {
         if (magicCircle) {
             magicCircle.rotation.z += delta * 0.045;
@@ -1799,12 +1878,28 @@
             cherrySystem.geometry.setDrawRange(0, quality.activeCherryParticles);
         }
 
-        if (state.activeCard) {
-            goldLight.position.x += ((pointerNDC.x !== -999 ? pointerNDC.x : 0) * 8 - goldLight.position.x) * 0.12;
-            goldLight.position.y += ((pointerNDC.y !== -999 ? pointerNDC.y : 0) * 8 - goldLight.position.y) * 0.12;
+        const lightActive = !!state.activeCard || now < state.revealLightUntil || (explosionSystem && explosionSystem.visible);
+        if (lightActive) {
+            const target = pointerLightTarget();
+            goldLight.position.x += (target.x - goldLight.position.x) * 0.18;
+            goldLight.position.y += (target.y - goldLight.position.y) * 0.18;
+            goldLight.position.z += (target.z - goldLight.position.z) * 0.14;
+            goldLight.intensity += (1.75 - goldLight.intensity) * 0.12;
         } else {
             goldLight.position.x += (0 - goldLight.position.x) * 0.08;
             goldLight.position.y += (1 - goldLight.position.y) * 0.08;
+            goldLight.position.z += (4 - goldLight.position.z) * 0.08;
+            goldLight.intensity += (0.82 - goldLight.intensity) * 0.08;
+        }
+
+        if (cursorGlow && cursorGlowMaterial) {
+            const targetOpacity = lightActive ? 0.5 : 0;
+            cursorGlowMaterial.opacity += (targetOpacity - cursorGlowMaterial.opacity) * 0.18;
+            cursorGlow.visible = cursorGlowMaterial.opacity > 0.02;
+            cursorGlow.position.set(goldLight.position.x, goldLight.position.y, 2.05);
+            const targetScale = state.activeCard ? 2.05 : 2.55;
+            cursorGlow.scale.x += (targetScale - cursorGlow.scale.x) * 0.16;
+            cursorGlow.scale.y += (targetScale - cursorGlow.scale.y) * 0.16;
         }
 
         if (explosionSystem && explosionSystem.visible) {
@@ -1947,7 +2042,12 @@
             get handLostFrames() { return state.handLostFrames; },
             get handActionScore() { return Number(state.handActionScore.toFixed(2)); },
             get lastGestureInferenceMs() { return Math.round(state.lastHandProcessTime || 0); },
-            get longTaskCount() { return state.longTaskCount; }
+            get longTaskCount() { return state.longTaskCount; },
+            get cardDepth() { return CARD_WORLD_DEPTH; },
+            get cursorGlowVisible() { return !!(cursorGlow && cursorGlow.visible); },
+            get explosionVisible() { return !!(explosionSystem && explosionSystem.visible); },
+            get explosionLife() { return Number(explosionLife.toFixed(2)); },
+            get lastExplosionDelayMs() { return state.lastExplosionDelayMs; }
         };
     }
 
