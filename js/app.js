@@ -19,7 +19,7 @@
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
     const CARD_WORLD_WIDTH = 1.6;
     const CARD_WORLD_HEIGHT = 3.6;
-    const CARD_WORLD_DEPTH = 0.105;
+    const CARD_WORLD_DEPTH = 0.04;
     const CARD_CORNER_RADIUS = 0.16;
     const CARD_EDGE_SEGMENTS = 10;
     const RELEASE_BURST_LIGHT_MS = 820;
@@ -186,50 +186,55 @@
         if (cameraMode) {
             if (tabletLike) {
                 return {
-                    radius: 3.15,
-                    depthOffset: -7.45,
-                    cardScale: 0.52,
-                    grabScale: 0.86,
-                    revealScale: 0.96
+                    radius: 5.1,
+                    horizontalRadius: 2.35,
+                    depthOffset: -1.8,
+                    cardScale: 0.42,
+                    grabScale: 0.76,
+                    revealScale: 0.88
                 };
             }
 
             if (compact) {
                 return {
-                    radius: 1.72,
-                    depthOffset: -7.35,
-                    cardScale: 0.46,
-                    grabScale: 0.78,
-                    revealScale: 0.88
+                    radius: 4.65,
+                    horizontalRadius: 1.35,
+                    depthOffset: -2.2,
+                    cardScale: 0.35,
+                    grabScale: 0.68,
+                    revealScale: 0.8
                 };
             }
 
             return {
-                radius: 3.75,
-                depthOffset: -7.8,
-                cardScale: 0.55,
-                grabScale: 0.96,
-                revealScale: 1.05
-            };
-        }
-
-        if (tabletLike) {
-            return {
-                radius: 3.25,
-                depthOffset: -7.45,
-                cardScale: 0.54,
+                radius: 5.1,
+                horizontalRadius: 2.85,
+                depthOffset: -2.35,
+                cardScale: 0.44,
                 grabScale: 0.88,
                 revealScale: 0.98
             };
         }
 
+        if (tabletLike) {
+            return {
+                radius: 5.1,
+                horizontalRadius: 2.35,
+                depthOffset: -1.8,
+                cardScale: 0.42,
+                grabScale: 0.78,
+                revealScale: 0.9
+            };
+        }
+
         if (compact) {
             return {
-                radius: 1.72,
-                depthOffset: -7.25,
-                cardScale: 0.47,
-                grabScale: 0.8,
-                revealScale: 0.9
+                radius: 4.65,
+                horizontalRadius: 1.35,
+                depthOffset: -2.2,
+                cardScale: 0.35,
+                grabScale: 0.72,
+                revealScale: 0.82
             };
         }
 
@@ -242,6 +247,7 @@
             return;
         }
         quality.radius = layout.radius;
+        quality.horizontalRadius = layout.horizontalRadius || layout.radius;
         quality.depthOffset = layout.depthOffset;
         quality.cardScale = layout.cardScale;
         quality.grabScale = layout.grabScale;
@@ -287,11 +293,12 @@
                 cherryParticles: 420,
                 activeCherryParticles: 420,
                 pixelRatio: 1.1,
-                radius: smallScreen ? 1.45 : 7.2,
-                depthOffset: smallScreen ? -7.2 : 0,
-                cardScale: smallScreen ? 0.48 : 0.58,
-                grabScale: smallScreen ? 0.82 : 1.04,
-                revealScale: smallScreen ? 0.9 : 1.12
+                radius: smallScreen ? 4.65 : 7.2,
+                horizontalRadius: smallScreen ? 1.35 : 7.2,
+                depthOffset: smallScreen ? -2.2 : 0,
+                cardScale: smallScreen ? 0.35 : 0.58,
+                grabScale: smallScreen ? 0.72 : 1.04,
+                revealScale: smallScreen ? 0.82 : 1.12
             };
         }
 
@@ -305,11 +312,12 @@
                 cherryParticles: 680,
                 activeCherryParticles: 680,
                 pixelRatio: 1.25,
-                radius: 1.45,
-                depthOffset: -7.2,
-                cardScale: 0.48,
-                grabScale: 0.82,
-                revealScale: 0.9
+                radius: 4.65,
+                horizontalRadius: 1.35,
+                depthOffset: -2.2,
+                cardScale: 0.35,
+                grabScale: 0.72,
+                revealScale: 0.82
             };
         }
 
@@ -323,6 +331,7 @@
             activeCherryParticles: 1100,
             pixelRatio: 1.65,
             radius: 8,
+            horizontalRadius: 8,
             depthOffset: 0,
             cardScale: 0.65,
             grabScale: 1.17,
@@ -333,6 +342,7 @@
     const quality = chooseQuality();
     quality.baseLayout = {
         radius: quality.radius,
+        horizontalRadius: quality.horizontalRadius || quality.radius,
         depthOffset: quality.depthOffset,
         cardScale: quality.cardScale,
         grabScale: quality.grabScale,
@@ -484,9 +494,9 @@
         const indices = [];
         const frontZ = depth / 2;
         const backZ = -depth / 2;
-        const shadow = new THREE.Color(0x8f6970);
-        const midtone = new THREE.Color(0xd6b8b4);
-        const highlight = new THREE.Color(0xffecd9);
+        const shadow = new THREE.Color(0x7e4655);
+        const midtone = new THREE.Color(0xc47e91);
+        const highlight = new THREE.Color(0xf3b9c4);
 
         function pushVertex(point, z) {
             positions.push(point.x, point.y, z);
@@ -953,12 +963,12 @@
             CARD_EDGE_SEGMENTS
         );
         sharedEdgeMat = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
+            color: 0xf2bdc8,
             vertexColors: true,
-            roughness: 0.68,
-            metalness: 0.1,
-            emissive: 0x14060a,
-            emissiveIntensity: 0.08
+            roughness: 0.74,
+            metalness: 0.04,
+            emissive: 0x0c0306,
+            emissiveIntensity: 0.04
         });
         sharedBackMat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
@@ -2013,7 +2023,8 @@
 
             if (card.state === "IDLE") {
                 const angle = state.globalAngle + card.index * angleStep;
-                card.targetX = Math.sin(angle) * quality.radius;
+                const horizontalRadius = quality.horizontalRadius || quality.radius;
+                card.targetX = Math.sin(angle) * horizontalRadius;
                 card.targetY = Math.sin(angle * 2) * 0.12;
                 card.targetZ = quality.depthOffset - Math.cos(angle) * quality.radius;
                 card.targetRotY = angle + Math.PI;
@@ -2247,6 +2258,7 @@
             get longTaskCount() { return state.longTaskCount; },
             get cardDepth() { return CARD_WORLD_DEPTH; },
             get cardRadius() { return quality.radius; },
+            get cardHorizontalRadius() { return quality.horizontalRadius || quality.radius; },
             get cardDepthOffset() { return quality.depthOffset; },
             get cardScale() { return quality.cardScale; },
             get viewport() {
