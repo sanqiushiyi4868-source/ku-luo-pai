@@ -17,6 +17,15 @@
     const TASKS_BASE = `${MEDIAPIPE_BASE}/tasks`;
     const GESTURE_WORKER_URL = "js/gesture-worker.js";
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
+    const CARD_WORLD_WIDTH = 1.6;
+    const CARD_WORLD_HEIGHT = 3.6;
+    const HAS_COARSE_POINTER = window.matchMedia("(pointer: coarse)").matches;
+    const HAND_FRAME_INTERVAL = HAS_COARSE_POINTER ? 118 : 92;
+    const HAND_SAMPLE_WIDTH = HAS_COARSE_POINTER ? 224 : 256;
+    const HAND_SAMPLE_HEIGHT = HAS_COARSE_POINTER ? 168 : 192;
+    const HAND_MIN_SAMPLE_WIDTH = 224;
+    const HAND_MIN_SAMPLE_HEIGHT = 168;
+    const HAND_ACTION_DEBOUNCE_MS = 120;
 
     const dom = {
         loadingScreen: document.getElementById("loading-screen"),
@@ -58,6 +67,7 @@
         gestureWorker: null,
         gestureWorkerReady: false,
         gestureWorkerLoading: false,
+        gestureWarmupStarted: false,
         gestureReadyPromise: null,
         gestureReadyResolve: null,
         gestureReadyReject: null,
@@ -68,16 +78,18 @@
         gestureVideoCallbackId: null,
         handCanvas: null,
         handCtx: null,
-        handFrameInterval: window.matchMedia("(pointer: coarse)").matches ? 166 : 125,
-        gestureTargetInterval: window.matchMedia("(pointer: coarse)").matches ? 166 : 125,
-        gestureSampleWidth: window.matchMedia("(pointer: coarse)").matches ? 256 : 320,
-        gestureSampleHeight: window.matchMedia("(pointer: coarse)").matches ? 192 : 240,
+        handFrameInterval: HAND_FRAME_INTERVAL,
+        gestureTargetInterval: HAND_FRAME_INTERVAL,
+        gestureSampleWidth: HAND_SAMPLE_WIDTH,
+        gestureSampleHeight: HAND_SAMPLE_HEIGHT,
         lastGestureFrameAt: 0,
         lastGestureResultAt: 0,
         lastHandProcessTime: 0,
         lastHandSeenAt: 0,
         lastGestureStatusAt: 0,
         lastGestureStatusText: "",
+        handActionScore: 0,
+        lastHandActionAt: 0,
         handSlowFrames: 0,
         handFrameTimeouts: 0,
         handModelLoading: false,
@@ -675,7 +687,7 @@
 
     function setupCards(backTexture, cardsLoaded) {
         clowData = cardsLoaded;
-        sharedGeometry = new THREE.BoxGeometry(1.6, 3.6, 0.02);
+        sharedGeometry = new THREE.BoxGeometry(CARD_WORLD_WIDTH, CARD_WORLD_HEIGHT, 0.02);
         sharedEdgeMat = new THREE.MeshBasicMaterial({ color: 0xa32946, visible: false });
         sharedBackMat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
@@ -955,7 +967,7 @@
         state.currentInputSource = source;
         dom.cursorRing.classList.toggle("is-touch", source === "touch");
 
-        const easing = source === "hand" ? 0.28 : 0.42;
+        const easing = source === "hand" ? 0.38 : 0.42;
         state.cursorX += (rawX - state.cursorX) * easing;
         state.cursorY += (rawY - state.cursorY) * easing;
 
@@ -1036,6 +1048,96 @@
         return Math.hypot(a.x - b.x, a.y - b.y);
     }
 
+    function averageLandmark(landmarks, indexes) {
+        const point = { x: 0, y: 0, z: 0 };
+        for (const index of indexes) {
+            point.x += landmarks[index].x;
+            point.y += landmarks[index].y;
+            point.z += landmarks[index].z || 0;
+        }
+        point.x /= indexes.length;
+        point.y /= indexes.length;
+        point.z /= indexes.length;
+        return point;
+    }
+
+    function fingerPoseSummary(landmarks) {
+        const fingerPairs = [
+            [8, 6],
+            [12, 10],
+            [16, 14],
+            [20, 18]
+        ];
+        let folded = 0;
+        let extended = 0;
+        for (const [tip, pip] of fingerPairs) {
+            if (landmarks[tip].y > landmarks[pip].y + 0.018) {
+                folded += 1;
+            } else if (landmarks[tip].y < landmarks[pip].y - 0.018) {
+                extended += 1;
+            }
+        }
+        return { folded, extended };
+    }
+
+    function updateHandAction(landmarks, gesture, now) {
+        const label = String(gesture || "").toLowerCase();
+        const pinchDist = landmarkDistance(landmarks[8], landmarks[4]);
+        const palmSpan = Math.max(
+            landmarkDistance(landmarks[5], landmarks[17]),
+            landmarkDistance(landmarks[0], landmarks[9]),
+            0.001
+        );
+        const pinchRatio = pinchDist / palmSpan;
+        const pose = fingerPoseSummary(landmarks);
+        let targetScore = state.handActionScore;
+        let smoothing = 0.28;
+
+        if (label.includes("closed_fist")) {
+            targetScore = 1;
+            smoothing = 0.52;
+        } else if (label.includes("open_palm")) {
+            targetScore = 0;
+            smoothing = 0.52;
+        } else if (pose.folded >= 3 || pinchRatio < 0.30) {
+            targetScore = 1;
+            smoothing = 0.38;
+        } else if (pose.extended >= 3 && pinchRatio > 0.42) {
+            targetScore = 0;
+            smoothing = 0.38;
+        }
+
+        state.handActionScore += (targetScore - state.handActionScore) * smoothing;
+        if (!state.isHandPinching && state.handActionScore > 0.62 && now - state.lastHandActionAt > HAND_ACTION_DEBOUNCE_MS) {
+            state.isHandPinching = true;
+            state.lastHandActionAt = now;
+        } else if (state.isHandPinching && state.handActionScore < 0.38 && now - state.lastHandActionAt > HAND_ACTION_DEBOUNCE_MS) {
+            state.isHandPinching = false;
+            state.lastHandActionAt = now;
+        }
+
+        return {
+            isActionDown: state.isHandPinching,
+            pinchRatio,
+            folded: pose.folded,
+            extended: pose.extended
+        };
+    }
+
+    function handCursorPoint(landmarks, isActionDown) {
+        const indexTip = landmarks[8];
+        if (!isActionDown) {
+            return indexTip;
+        }
+
+        const palmCenter = averageLandmark(landmarks, [0, 5, 9, 13, 17]);
+        return {
+            x: indexTip.x * 0.45 + palmCenter.x * 0.55,
+            y: indexTip.y * 0.45 + palmCenter.y * 0.55,
+            z: (indexTip.z || 0) * 0.45 + (palmCenter.z || 0) * 0.55
+        };
+    }
+
     function gestureDebugText(label, payload) {
         const hands = payload && payload.hands ? payload.hands : 0;
         const infer = payload && payload.inferenceMs ? Math.round(payload.inferenceMs) : Math.round(state.lastHandProcessTime || 0);
@@ -1053,31 +1155,21 @@
             processInput(state.cursorX, state.cursorY, false, "hand");
         }
         state.isHandPinching = false;
+        state.handActionScore = 0;
     }
 
     function onGestureResult(payload) {
         state.lastGestureResultAt = performance.now();
         state.lastHandProcessTime = payload.inferenceMs || 0;
 
-        if (payload.hands && payload.landmarks && payload.landmarks.length > 8) {
+        if (payload.hands && payload.landmarks && payload.landmarks.length > 17) {
             state.handLostFrames = 0;
             state.lastHandSeenAt = performance.now();
             const landmarks = payload.landmarks;
-            const rawX = (1 - landmarks[8].x) * window.innerWidth;
-            const rawY = landmarks[8].y * window.innerHeight;
-            const pinchDist = landmarkDistance(landmarks[8], landmarks[4]);
-            const palmSpan = Math.max(
-                landmarkDistance(landmarks[5], landmarks[17]),
-                landmarkDistance(landmarks[0], landmarks[9]),
-                0.001
-            );
-            const pinchRatio = pinchDist / palmSpan;
-
-            if (!state.isHandPinching && pinchRatio < 0.32) {
-                state.isHandPinching = true;
-            } else if (state.isHandPinching && pinchRatio > 0.47) {
-                state.isHandPinching = false;
-            }
+            const action = updateHandAction(landmarks, payload.gesture, state.lastGestureResultAt);
+            const cursorPoint = handCursorPoint(landmarks, action.isActionDown);
+            const rawX = (1 - cursorPoint.x) * window.innerWidth;
+            const rawY = cursorPoint.y * window.innerHeight;
 
             setGestureStatus(
                 gestureDebugText(state.isHandPinching ? "捏合中" : "识别到手", payload),
@@ -1145,6 +1237,7 @@
         state.handModeStarted = false;
         state.gestureWorkerReady = false;
         state.gestureWorkerLoading = false;
+        state.gestureWarmupStarted = false;
         state.gestureReadyPromise = null;
         state.gestureReadyResolve = null;
         state.gestureReadyReject = null;
@@ -1211,20 +1304,20 @@
     }
 
     function updateGesturePerformance(inferenceMs) {
-        if (inferenceMs > 90) {
+        if (inferenceMs > 78) {
             state.handSlowFrames += 1;
-            state.handFrameInterval = Math.min(220, state.handFrameInterval + 18);
+            state.handFrameInterval = Math.min(180, state.handFrameInterval + 14);
             setGestureStatus(gestureDebugText("识别降频", { hands: 1, inferenceMs }), "warn");
             reportStage("gesture:frame", `slow ${Math.round(inferenceMs)}ms, interval ${state.handFrameInterval}ms`, "log");
-            if (state.handSlowFrames >= 2 && state.gestureSampleWidth > 256) {
-                state.gestureSampleWidth = 256;
-                state.gestureSampleHeight = 192;
+            if (state.handSlowFrames >= 2 && state.gestureSampleWidth > HAND_MIN_SAMPLE_WIDTH) {
+                state.gestureSampleWidth = HAND_MIN_SAMPLE_WIDTH;
+                state.gestureSampleHeight = HAND_MIN_SAMPLE_HEIGHT;
                 setupHandInputCanvas();
                 applyCameraPerformanceProfile("gesture slow");
             }
-        } else if (inferenceMs < 55 && state.handFrameInterval > state.gestureTargetInterval) {
+        } else if (inferenceMs < 46 && state.handFrameInterval > state.gestureTargetInterval) {
             state.handSlowFrames = Math.max(0, state.handSlowFrames - 1);
-            state.handFrameInterval = Math.max(state.gestureTargetInterval, state.handFrameInterval - 8);
+            state.handFrameInterval = Math.max(state.gestureTargetInterval, state.handFrameInterval - 6);
         }
     }
 
@@ -1278,11 +1371,29 @@
             }, [bitmap]);
         } catch (error) {
             state.handFrameTimeouts += 1;
-            state.handFrameInterval = Math.min(240, state.handFrameInterval + 24);
+            state.handFrameInterval = Math.min(180, state.handFrameInterval + 18);
             setGestureStatus("识别中断", "warn", true);
             reportStage("gesture:frame", error);
         } finally {
             state.gestureFrameCreating = false;
+        }
+    }
+
+    function failGestureInitialization(error) {
+        const reject = state.gestureReadyReject;
+        if (state.gestureWorker) {
+            state.gestureWorker.terminate();
+            state.gestureWorker = null;
+        }
+        state.gestureWorkerReady = false;
+        state.gestureWorkerLoading = false;
+        state.gestureWarmupStarted = false;
+        state.gestureReadyPromise = null;
+        state.gestureReadyResolve = null;
+        state.gestureReadyReject = null;
+        state.gestureFramePending = false;
+        if (reject) {
+            reject(error);
         }
     }
 
@@ -1306,11 +1417,8 @@
             reportStage(data.stage || "gesture:worker", error);
             state.gestureFramePending = false;
             if ((data.stage || "").includes("init")) {
-                state.gestureWorkerLoading = false;
                 setGestureStatus("模型失败", "warn", true);
-                if (state.gestureReadyReject) {
-                    state.gestureReadyReject(error);
-                }
+                failGestureInitialization(error);
             }
             return;
         }
@@ -1346,12 +1454,8 @@
             worker.onerror = (event) => {
                 const error = new Error(event.message || "Gesture worker crashed");
                 reportStage("gesture:worker", error);
-                state.gestureWorkerLoading = false;
-                state.gestureWorkerReady = false;
                 setGestureStatus("识别崩溃", "warn", true);
-                if (state.gestureReadyReject) {
-                    state.gestureReadyReject(error);
-                }
+                failGestureInitialization(error);
             };
             state.gestureWorker = worker;
             worker.postMessage({
@@ -1368,6 +1472,25 @@
         }
 
         return state.gestureReadyPromise;
+    }
+
+    function warmGestureWorker() {
+        if (state.gestureWarmupStarted || state.gestureWorkerReady || state.gestureWorkerLoading) {
+            return;
+        }
+        if (!window.Worker || window.location.protocol === "file:") {
+            return;
+        }
+
+        state.gestureWarmupStarted = true;
+        scheduleIdle(() => {
+            if (state.gestureWorkerReady || state.gestureWorkerLoading || state.handModeStarted || state.loadState !== "READY") {
+                return;
+            }
+            initializeGestureWorker().catch((error) => {
+                reportStage("gesture:warmup", error, "log");
+            });
+        }, 700);
     }
 
     async function startGestureMode() {
@@ -1398,13 +1521,14 @@
             }
 
             setStatus("正在请求摄像头权限");
+            const workerReady = initializeGestureWorker().catch((error) => error);
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: false,
                 video: {
                     facingMode: "user",
-                    width: { ideal: 640 },
-                    height: { ideal: 480 },
-                    frameRate: { ideal: 30, max: 30 }
+                    width: { ideal: 424 },
+                    height: { ideal: 320 },
+                    frameRate: { ideal: 24, max: 24 }
                 }
             });
 
@@ -1421,7 +1545,10 @@
             dom.gestureToggle.textContent = "手势中";
             setGestureStatus("摄像头已开", "ready", true);
             setStatus("摄像头已开启，正在加载手势识别模型");
-            await initializeGestureWorker();
+            const workerResult = await workerReady;
+            if (workerResult instanceof Error) {
+                throw workerResult;
+            }
             setStatus("手势识别已就绪：移动食指旋转，捏合抽取，松开释放牌灵");
             return true;
         } catch (error) {
@@ -1478,6 +1605,18 @@
         }
     }
 
+    function fitCardScaleToViewport(baseScale, targetZ, fill = 0.78) {
+        if (!camera) {
+            return baseScale;
+        }
+        const distance = Math.max(1, Math.abs(targetZ - camera.position.z));
+        const verticalWorld = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * distance;
+        const horizontalWorld = verticalWorld * camera.aspect;
+        const maxByHeight = (verticalWorld * fill) / CARD_WORLD_HEIGHT;
+        const maxByWidth = (horizontalWorld * 0.76) / CARD_WORLD_WIDTH;
+        return Math.max(0.62, Math.min(baseScale, maxByHeight, maxByWidth));
+    }
+
     function updateCards(now) {
         if (state.loadState === "PLAYING" && !state.activeCard) {
             state.globalAngle += state.angularVelocity;
@@ -1508,14 +1647,16 @@
                 card.targetScaleZ = quality.cardScale;
             } else if (card.state === "GRABBED" || card.state === "REVEALED") {
                 const isReveal = card.state === "REVEALED";
+                const targetZ = isReveal ? -6.2 : -7;
+                const targetScale = fitCardScaleToViewport(isReveal ? quality.revealScale : quality.grabScale, targetZ);
                 card.targetX = isReveal ? 0 : (pointerNDC.x !== -999 ? pointerNDC.x * 1.4 : 0);
                 card.targetY = isReveal ? 0.1 : 0;
-                card.targetZ = isReveal ? -6.2 : -7;
+                card.targetZ = targetZ;
                 card.targetRotX = isReveal ? 0 : (pointerNDC.y !== -999 ? pointerNDC.y * 0.28 : 0);
                 card.targetRotY = isReveal ? 0 : (pointerNDC.x !== -999 ? pointerNDC.x * 0.34 : 0);
-                card.targetScaleX = isReveal ? quality.revealScale : quality.grabScale;
-                card.targetScaleY = isReveal ? quality.revealScale : quality.grabScale;
-                card.targetScaleZ = isReveal ? quality.revealScale : quality.grabScale;
+                card.targetScaleX = targetScale;
+                card.targetScaleY = targetScale;
+                card.targetScaleZ = targetScale;
 
                 if (isReveal && now > card.revealUntil) {
                     card.state = "DESTROYED";
@@ -1674,6 +1815,8 @@
         resize();
         setStatus("选择触摸/鼠标或摄像头手势模式");
 
+        warmGestureWorker();
+
         window.__clowAppState = {
             get loadState() { return state.loadState; },
             get cardCount() { return cards.length; },
@@ -1687,6 +1830,8 @@
             get activeExplosionParticles() { return quality.activeParticles; },
             get pixelRatio() { return quality.pixelRatio; },
             get gestureReady() { return state.gestureWorkerReady; },
+            get gestureLoading() { return state.gestureWorkerLoading; },
+            get gestureWarmupStarted() { return state.gestureWarmupStarted; },
             get gestureInterval() { return state.handFrameInterval; },
             get gestureSample() { return `${state.gestureSampleWidth}x${state.gestureSampleHeight}`; },
             get lastGestureInferenceMs() { return Math.round(state.lastHandProcessTime || 0); },

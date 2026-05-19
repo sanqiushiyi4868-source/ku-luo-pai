@@ -68,9 +68,9 @@ self.onmessage = async (event) => {
                 },
                 runningMode: "VIDEO",
                 numHands: 1,
-                minHandDetectionConfidence: 0.45,
-                minHandPresenceConfidence: 0.45,
-                minTrackingConfidence: 0.45
+                minHandDetectionConfidence: 0.40,
+                minHandPresenceConfidence: 0.40,
+                minTrackingConfidence: 0.35
             });
 
             self.postMessage({ type: "ready" });
