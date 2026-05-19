@@ -26,6 +26,14 @@
     const HAND_MIN_SAMPLE_WIDTH = 224;
     const HAND_MIN_SAMPLE_HEIGHT = 168;
     const HAND_ACTION_DEBOUNCE_MS = 120;
+    const HAND_CONNECTIONS = [
+        [0, 1], [1, 2], [2, 3], [3, 4],
+        [0, 5], [5, 6], [6, 7], [7, 8],
+        [5, 9], [9, 10], [10, 11], [11, 12],
+        [9, 13], [13, 14], [14, 15], [15, 16],
+        [13, 17], [17, 18], [18, 19], [19, 20],
+        [0, 17]
+    ];
 
     const dom = {
         loadingScreen: document.getElementById("loading-screen"),
@@ -42,6 +50,7 @@
         historyTray: document.getElementById("history-tray"),
         webcamWrap: document.getElementById("webcam-container"),
         webcam: document.getElementById("webcam"),
+        webcamOverlay: document.getElementById("webcam-overlay"),
         gestureToggle: document.getElementById("gesture-toggle"),
         gestureStatus: document.getElementById("gesture-status"),
         qualityBadge: document.getElementById("quality-badge")
@@ -78,6 +87,7 @@
         gestureVideoCallbackId: null,
         handCanvas: null,
         handCtx: null,
+        webcamOverlayCtx: null,
         handFrameInterval: HAND_FRAME_INTERVAL,
         gestureTargetInterval: HAND_FRAME_INTERVAL,
         gestureSampleWidth: HAND_SAMPLE_WIDTH,
@@ -1063,17 +1073,33 @@
 
     function fingerPoseSummary(landmarks) {
         const fingerPairs = [
-            [8, 6],
-            [12, 10],
-            [16, 14],
-            [20, 18]
+            [8, 6, 5],
+            [12, 10, 9],
+            [16, 14, 13],
+            [20, 18, 17]
         ];
+        const wrist = landmarks[0];
+        const palmSpan = Math.max(
+            landmarkDistance(landmarks[5], landmarks[17]),
+            landmarkDistance(wrist, landmarks[9]),
+            0.001
+        );
         let folded = 0;
         let extended = 0;
-        for (const [tip, pip] of fingerPairs) {
-            if (landmarks[tip].y > landmarks[pip].y + 0.018) {
+        for (const [tip, pip, mcp] of fingerPairs) {
+            const tipPoint = landmarks[tip];
+            const pipPoint = landmarks[pip];
+            const mcpPoint = landmarks[mcp];
+            const tipToWrist = landmarkDistance(tipPoint, wrist);
+            const pipToWrist = landmarkDistance(pipPoint, wrist);
+            const mcpToWrist = landmarkDistance(mcpPoint, wrist);
+            const extensionRatio = tipToWrist / Math.max(pipToWrist, 0.001);
+            const foldedByDistance = extensionRatio < 0.98 || tipToWrist < mcpToWrist + palmSpan * 0.28;
+            const extendedByDistance = extensionRatio > 1.08 && tipToWrist > mcpToWrist + palmSpan * 0.40;
+
+            if (foldedByDistance || tipPoint.y > pipPoint.y + 0.018) {
                 folded += 1;
-            } else if (landmarks[tip].y < landmarks[pip].y - 0.018) {
+            } else if (extendedByDistance || tipPoint.y < pipPoint.y - 0.018) {
                 extended += 1;
             }
         }
@@ -1102,7 +1128,7 @@
         } else if (pose.folded >= 3 || pinchRatio < 0.30) {
             targetScore = 1;
             smoothing = 0.38;
-        } else if (pose.extended >= 3 && pinchRatio > 0.42) {
+        } else if (pose.extended >= 3 && pinchRatio > 0.36) {
             targetScore = 0;
             smoothing = 0.38;
         }
@@ -1138,6 +1164,78 @@
         };
     }
 
+    function ensureWebcamOverlayCanvas() {
+        const canvas = dom.webcamOverlay;
+        if (!canvas) {
+            return null;
+        }
+
+        const width = Math.max(1, Math.round(canvas.clientWidth || dom.webcamWrap.clientWidth || 1));
+        const height = Math.max(1, Math.round(canvas.clientHeight || dom.webcamWrap.clientHeight || 1));
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+            state.webcamOverlayCtx = null;
+        }
+        if (!state.webcamOverlayCtx) {
+            state.webcamOverlayCtx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+        }
+        return state.webcamOverlayCtx;
+    }
+
+    function clearWebcamOverlay() {
+        const ctx = ensureWebcamOverlayCanvas();
+        if (!ctx) {
+            return;
+        }
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+
+    function drawHandOverlay(landmarks, action) {
+        const ctx = ensureWebcamOverlayCanvas();
+        if (!ctx) {
+            return;
+        }
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        if (!landmarks || landmarks.length < 21) {
+            return;
+        }
+
+        const width = ctx.canvas.width;
+        const height = ctx.canvas.height;
+        const active = action && action.isActionDown;
+        const lineColor = active ? "rgba(255, 96, 138, 0.95)" : "rgba(96, 255, 210, 0.95)";
+        const jointColor = active ? "rgba(255, 226, 147, 0.98)" : "rgba(255, 255, 255, 0.96)";
+
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = lineColor;
+        for (const [start, end] of HAND_CONNECTIONS) {
+            const a = landmarks[start];
+            const b = landmarks[end];
+            if (!a || !b) {
+                continue;
+            }
+            ctx.beginPath();
+            ctx.moveTo(a.x * width, a.y * height);
+            ctx.lineTo(b.x * width, b.y * height);
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = jointColor;
+        ctx.strokeStyle = "rgba(5, 4, 10, 0.72)";
+        ctx.lineWidth = 1.5;
+        for (const point of landmarks) {
+            ctx.beginPath();
+            ctx.arc(point.x * width, point.y * height, 3.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
     function gestureDebugText(label, payload) {
         const hands = payload && payload.hands ? payload.hands : 0;
         const infer = payload && payload.inferenceMs ? Math.round(payload.inferenceMs) : Math.round(state.lastHandProcessTime || 0);
@@ -1156,6 +1254,7 @@
         }
         state.isHandPinching = false;
         state.handActionScore = 0;
+        clearWebcamOverlay();
     }
 
     function onGestureResult(payload) {
@@ -1167,6 +1266,7 @@
             state.lastHandSeenAt = performance.now();
             const landmarks = payload.landmarks;
             const action = updateHandAction(landmarks, payload.gesture, state.lastGestureResultAt);
+            drawHandOverlay(landmarks, action);
             const cursorPoint = handCursorPoint(landmarks, action.isActionDown);
             const rawX = (1 - cursorPoint.x) * window.innerWidth;
             const rawY = cursorPoint.y * window.innerHeight;
@@ -1180,6 +1280,9 @@
         }
 
         state.handLostFrames += 1;
+        if (state.handLostFrames > 1) {
+            clearWebcamOverlay();
+        }
         setGestureStatus(gestureDebugText("未识别", payload), "warn");
         if (state.handLostFrames > 3 && state.currentInputSource === "hand") {
             releaseLostHand();
@@ -1233,6 +1336,7 @@
             state.handStream = null;
         }
         dom.webcam.srcObject = null;
+        clearWebcamOverlay();
         dom.webcamWrap.hidden = true;
         state.handModeStarted = false;
         state.gestureWorkerReady = false;
@@ -1539,7 +1643,9 @@
             await dom.webcam.play();
 
             state.handModeStarted = true;
+            state.lastGestureFrameAt = 0;
             setupHandInputCanvas();
+            clearWebcamOverlay();
             applyCameraPerformanceProfile("gesture start");
             dom.gestureToggle.classList.add("is-active");
             dom.gestureToggle.textContent = "手势中";
@@ -1549,6 +1655,8 @@
             if (workerResult instanceof Error) {
                 throw workerResult;
             }
+            scheduleGestureLoop();
+            void maybeSendGestureFrame();
             setStatus("手势识别已就绪：移动食指旋转，捏合抽取，松开释放牌灵");
             return true;
         } catch (error) {
@@ -1834,6 +1942,10 @@
             get gestureWarmupStarted() { return state.gestureWarmupStarted; },
             get gestureInterval() { return state.handFrameInterval; },
             get gestureSample() { return `${state.gestureSampleWidth}x${state.gestureSampleHeight}`; },
+            get gestureFrameId() { return state.gestureFrameId; },
+            get gestureFramePending() { return state.gestureFramePending; },
+            get handLostFrames() { return state.handLostFrames; },
+            get handActionScore() { return Number(state.handActionScore.toFixed(2)); },
             get lastGestureInferenceMs() { return Math.round(state.lastHandProcessTime || 0); },
             get longTaskCount() { return state.longTaskCount; }
         };
