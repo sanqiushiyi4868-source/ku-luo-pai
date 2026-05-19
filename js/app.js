@@ -19,7 +19,9 @@
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
     const CARD_WORLD_WIDTH = 1.6;
     const CARD_WORLD_HEIGHT = 3.6;
-    const CARD_WORLD_DEPTH = 0.075;
+    const CARD_WORLD_DEPTH = 0.105;
+    const CARD_CORNER_RADIUS = 0.16;
+    const CARD_EDGE_SEGMENTS = 10;
     const RELEASE_BURST_LIGHT_MS = 820;
     const HAS_COARSE_POINTER = window.matchMedia("(pointer: coarse)").matches;
     const HAND_FRAME_INTERVAL = HAS_COARSE_POINTER ? 118 : 92;
@@ -153,6 +155,99 @@
         window.setTimeout(callback, Math.min(timeout, 250));
     }
 
+    function viewportMetrics() {
+        const visual = window.visualViewport;
+        const rawWidth = visual && visual.width ? visual.width : window.innerWidth;
+        const rawHeight = visual && visual.height ? visual.height : window.innerHeight;
+        const width = Math.max(320, Math.round(rawWidth || document.documentElement.clientWidth || 320));
+        const height = Math.max(320, Math.round(rawHeight || document.documentElement.clientHeight || 320));
+        const min = Math.min(width, height);
+        const max = Math.max(width, height);
+        return {
+            width,
+            height,
+            min,
+            max,
+            aspect: width / height,
+            coarse: window.matchMedia("(pointer: coarse)").matches
+        };
+    }
+
+    function responsiveCardLayout() {
+        if (!quality || !quality.baseLayout) {
+            return null;
+        }
+
+        const viewport = viewportMetrics();
+        const cameraMode = state.handModeStarted || state.currentInputSource === "hand";
+        const tabletLike = viewport.coarse && viewport.min >= 620 && viewport.max >= 960;
+        const compact = viewport.min < 620;
+
+        if (cameraMode) {
+            if (tabletLike) {
+                return {
+                    radius: 3.15,
+                    depthOffset: -7.45,
+                    cardScale: 0.52,
+                    grabScale: 0.86,
+                    revealScale: 0.96
+                };
+            }
+
+            if (compact) {
+                return {
+                    radius: 1.72,
+                    depthOffset: -7.35,
+                    cardScale: 0.46,
+                    grabScale: 0.78,
+                    revealScale: 0.88
+                };
+            }
+
+            return {
+                radius: 3.75,
+                depthOffset: -7.8,
+                cardScale: 0.55,
+                grabScale: 0.96,
+                revealScale: 1.05
+            };
+        }
+
+        if (tabletLike) {
+            return {
+                radius: 3.25,
+                depthOffset: -7.45,
+                cardScale: 0.54,
+                grabScale: 0.88,
+                revealScale: 0.98
+            };
+        }
+
+        if (compact) {
+            return {
+                radius: 1.72,
+                depthOffset: -7.25,
+                cardScale: 0.47,
+                grabScale: 0.8,
+                revealScale: 0.9
+            };
+        }
+
+        return quality.baseLayout;
+    }
+
+    function applyResponsiveCardLayout() {
+        const layout = responsiveCardLayout();
+        if (!layout) {
+            return;
+        }
+        quality.radius = layout.radius;
+        quality.depthOffset = layout.depthOffset;
+        quality.cardScale = layout.cardScale;
+        quality.grabScale = layout.grabScale;
+        quality.revealScale = layout.revealScale;
+    }
+
     function setupLongTaskObserver() {
         if (!("PerformanceObserver" in window)) {
             return;
@@ -178,8 +273,9 @@
     function chooseQuality() {
         const cores = navigator.hardwareConcurrency || 4;
         const memory = navigator.deviceMemory || 4;
-        const coarse = window.matchMedia("(pointer: coarse)").matches;
-        const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 760;
+        const viewport = viewportMetrics();
+        const coarse = viewport.coarse;
+        const smallScreen = viewport.min < 760;
 
         if (cores <= 4 || memory <= 3) {
             return {
@@ -235,6 +331,14 @@
     }
 
     const quality = chooseQuality();
+    quality.baseLayout = {
+        radius: quality.radius,
+        depthOffset: quality.depthOffset,
+        cardScale: quality.cardScale,
+        grabScale: quality.grabScale,
+        revealScale: quality.revealScale
+    };
+    applyResponsiveCardLayout();
     dom.qualityBadge.textContent = quality.label;
 
     function markLoaded(label) {
@@ -346,6 +450,76 @@
         return texture;
     }
 
+    function roundedRectOutline(width, height, radius, segments) {
+        const halfWidth = width / 2;
+        const halfHeight = height / 2;
+        const r = Math.min(radius, halfWidth, halfHeight);
+        const outline = [];
+        const corners = [
+            { x: halfWidth - r, y: halfHeight - r, from: Math.PI / 2, to: 0 },
+            { x: halfWidth - r, y: -halfHeight + r, from: 0, to: -Math.PI / 2 },
+            { x: -halfWidth + r, y: -halfHeight + r, from: -Math.PI / 2, to: -Math.PI },
+            { x: -halfWidth + r, y: halfHeight - r, from: Math.PI, to: Math.PI / 2 }
+        ];
+
+        for (const corner of corners) {
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const angle = corner.from + (corner.to - corner.from) * t;
+                outline.push({
+                    x: corner.x + Math.cos(angle) * r,
+                    y: corner.y + Math.sin(angle) * r
+                });
+            }
+        }
+
+        return outline;
+    }
+
+    function createRoundedEdgeGeometry(width, height, depth, radius, segments) {
+        const outline = roundedRectOutline(width, height, radius, segments);
+        const positions = [];
+        const normals = [];
+        const colors = [];
+        const indices = [];
+        const frontZ = depth / 2;
+        const backZ = -depth / 2;
+        const shadow = new THREE.Color(0x8f6970);
+        const midtone = new THREE.Color(0xd6b8b4);
+        const highlight = new THREE.Color(0xffecd9);
+
+        function pushVertex(point, z) {
+            positions.push(point.x, point.y, z);
+            const normalLength = Math.max(0.001, Math.hypot(point.x, point.y));
+            normals.push(point.x / normalLength, point.y / normalLength, 0);
+
+            const yMix = (point.y / (height / 2) + 1) * 0.5;
+            const zMix = z > 0 ? 0.18 : -0.08;
+            const color = shadow.clone().lerp(midtone, 0.58 + yMix * 0.18 + zMix).lerp(highlight, yMix * 0.16);
+            colors.push(color.r, color.g, color.b);
+        }
+
+        for (let i = 0; i < outline.length; i++) {
+            const nextIndex = (i + 1) % outline.length;
+            const current = outline[i];
+            const next = outline[nextIndex];
+            const base = positions.length / 3;
+            pushVertex(current, frontZ);
+            pushVertex(next, frontZ);
+            pushVertex(next, backZ);
+            pushVertex(current, backZ);
+            indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setIndex(indices);
+        geometry.computeBoundingSphere();
+        return geometry;
+    }
+
     const textureLoader = new THREE.TextureLoader();
     const roundedAlphaMap = createRoundedAlphaMap();
 
@@ -365,11 +539,33 @@
     let cherryMaterial;
     let explosionLife = 0;
     let explosionStartedAt = -100;
-    let sharedGeometry;
+    let sharedFaceGeometry;
+    let sharedEdgeGeometry;
     let sharedEdgeMat;
     let sharedBackMat;
     let cards = [];
     let clowData = [];
+
+    function createCardMesh(frontMaterial) {
+        const group = new THREE.Group();
+
+        const edge = new THREE.Mesh(sharedEdgeGeometry, sharedEdgeMat);
+        edge.castShadow = false;
+        edge.receiveShadow = false;
+
+        const frontFace = new THREE.Mesh(sharedFaceGeometry, frontMaterial);
+        frontFace.position.z = CARD_WORLD_DEPTH / 2 + 0.001;
+
+        const backFace = new THREE.Mesh(sharedFaceGeometry, sharedBackMat);
+        backFace.position.z = -CARD_WORLD_DEPTH / 2 - 0.001;
+        backFace.rotation.y = Math.PI;
+
+        group.add(edge, frontFace, backFace);
+        group.userData.frontFace = frontFace;
+        group.userData.backFace = backFace;
+        group.userData.edge = edge;
+        return group;
+    }
 
     async function prepareAssets() {
         const backPromise = loadTexture(textureLoader, backSources(), "牌背");
@@ -398,15 +594,16 @@
     }
 
     function setupRenderer() {
+        const viewport = viewportMetrics();
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x050308);
 
         const fov = quality.cards >= 18 ? 36 : 46;
-        camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera = new THREE.PerspectiveCamera(fov, viewport.aspect, 0.1, 1000);
         camera.position.set(0, 0, 0);
 
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(viewport.width, viewport.height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
         renderer.outputEncoding = THREE.sRGBEncoding;
         document.body.appendChild(renderer.domElement);
@@ -747,13 +944,21 @@
 
     function setupCards(backTexture, cardsLoaded) {
         clowData = cardsLoaded;
-        sharedGeometry = new THREE.BoxGeometry(CARD_WORLD_WIDTH, CARD_WORLD_HEIGHT, CARD_WORLD_DEPTH);
+        sharedFaceGeometry = new THREE.PlaneGeometry(CARD_WORLD_WIDTH, CARD_WORLD_HEIGHT);
+        sharedEdgeGeometry = createRoundedEdgeGeometry(
+            CARD_WORLD_WIDTH,
+            CARD_WORLD_HEIGHT,
+            CARD_WORLD_DEPTH,
+            CARD_CORNER_RADIUS,
+            CARD_EDGE_SEGMENTS
+        );
         sharedEdgeMat = new THREE.MeshStandardMaterial({
-            color: 0x7b1830,
-            roughness: 0.46,
-            metalness: 0.22,
-            emissive: 0x240611,
-            emissiveIntensity: 0.14
+            color: 0xffffff,
+            vertexColors: true,
+            roughness: 0.68,
+            metalness: 0.1,
+            emissive: 0x14060a,
+            emissiveIntensity: 0.08
         });
         sharedBackMat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
@@ -768,20 +973,15 @@
 
         cards = [];
         for (let i = 0; i < quality.cards; i++) {
-            const idleMaterials = [
-                sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedBackMat, sharedBackMat
-            ];
-            const faceMaterials = [
-                sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedBackMat, sharedBackMat
-            ];
-            const mesh = new THREE.Mesh(sharedGeometry, idleMaterials);
+            const mesh = createCardMesh(sharedBackMat);
             scene.add(mesh);
             cards.push({
                 mesh,
+                frontFace: mesh.userData.frontFace,
+                backFace: mesh.userData.backFace,
+                edge: mesh.userData.edge,
                 data: null,
                 index: i,
-                idleMaterials,
-                faceMaterials,
                 targetScaleX: quality.cardScale,
                 targetScaleY: quality.cardScale,
                 targetScaleZ: quality.cardScale,
@@ -810,14 +1010,12 @@
             }
         }
 
-        const prewarmMesh = new THREE.Mesh(sharedGeometry, cards[0] ? cards[0].faceMaterials : sharedBackMat);
+        const prewarmMesh = createCardMesh(sharedBackMat);
         prewarmMesh.frustumCulled = false;
         prewarmMesh.position.set(999, 999, -10);
         scene.add(prewarmMesh);
         for (const card of clowData) {
-            prewarmMesh.material = [
-                sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, sharedEdgeMat, card.material, sharedBackMat
-            ];
+            prewarmMesh.userData.frontFace.material = card.material;
             renderer.compile(scene, camera);
         }
         scene.remove(prewarmMesh);
@@ -974,7 +1172,7 @@
 
         window.setTimeout(() => {
             cardObj.data = null;
-            cardObj.mesh.material = cardObj.idleMaterials;
+            cardObj.frontFace.material = sharedBackMat;
             cardObj.mesh.position.y = -10;
             cardObj.mesh.visible = true;
             cardObj.state = "IDLE";
@@ -997,8 +1195,7 @@
     function grabCard(card) {
         const randomCard = clowData[Math.floor(Math.random() * clowData.length)];
         card.data = randomCard;
-        card.faceMaterials[4] = randomCard.material;
-        card.mesh.material = card.faceMaterials;
+        card.frontFace.material = randomCard.material;
         card.state = "GRABBED";
         card.targetScaleX = quality.grabScale;
         card.targetScaleY = quality.grabScale;
@@ -1020,7 +1217,7 @@
             if (card.state !== "IDLE" || !card.mesh.visible) {
                 continue;
             }
-            const intersects = raycaster.intersectObject(card.mesh);
+            const intersects = raycaster.intersectObject(card.mesh, true);
             if (intersects.length) {
                 grabCard(card);
                 return;
@@ -1044,6 +1241,7 @@
     function processInput(rawX, rawY, isActionDown, source) {
         state.currentInputSource = source;
         dom.cursorRing.classList.toggle("is-touch", source === "touch");
+        const viewport = viewportMetrics();
 
         const easing = source === "hand" ? 0.38 : 0.42;
         state.cursorX += (rawX - state.cursorX) * easing;
@@ -1052,8 +1250,8 @@
         dom.cursorRing.style.left = `${state.cursorX}px`;
         dom.cursorRing.style.top = `${state.cursorY}px`;
 
-        pointerNDC.x = (state.cursorX / window.innerWidth) * 2 - 1;
-        pointerNDC.y = -(state.cursorY / window.innerHeight) * 2 + 1;
+        pointerNDC.x = (state.cursorX / viewport.width) * 2 - 1;
+        pointerNDC.y = -(state.cursorY / viewport.height) * 2 + 1;
 
         if (state.loadState !== "PLAYING") {
             state.wasActionDown = isActionDown;
@@ -1336,8 +1534,9 @@
             const action = updateHandAction(landmarks, payload.gesture, state.lastGestureResultAt);
             drawHandOverlay(landmarks, action);
             const cursorPoint = handCursorPoint(landmarks, action.isActionDown);
-            const rawX = (1 - cursorPoint.x) * window.innerWidth;
-            const rawY = cursorPoint.y * window.innerHeight;
+            const viewport = viewportMetrics();
+            const rawX = (1 - cursorPoint.x) * viewport.width;
+            const rawY = cursorPoint.y * viewport.height;
 
             setGestureStatus(
                 gestureDebugText(state.isHandPinching ? "捏合中" : "识别到手", payload),
@@ -1450,6 +1649,7 @@
         quality.activeParticles = Math.max(150, Math.min(quality.activeParticles, Math.floor(quality.particles * 0.62)));
         quality.activeCards = Math.max(8, Math.min(quality.activeCards, coarse ? 12 : 14));
         quality.pixelRatio = Math.min(quality.pixelRatio, coarse ? 1.0 : 1.2);
+        applyResponsiveCardLayout();
         resize();
         reportStage("webgl:perf", `camera profile ${reason || "start"}: cards=${quality.activeCards}, cherry=${quality.activeCherryParticles}, burst=${quality.activeParticles}, pr=${quality.pixelRatio}`, "log");
     }
@@ -1970,9 +2170,11 @@
         if (!camera || !renderer) {
             return;
         }
-        camera.aspect = window.innerWidth / window.innerHeight;
+        applyResponsiveCardLayout();
+        const viewport = viewportMetrics();
+        camera.aspect = viewport.aspect;
         camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(viewport.width, viewport.height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
         const pixelRatio = Math.min(window.devicePixelRatio || 1, quality.pixelRatio);
         if (cherryMaterial) {
@@ -2044,6 +2246,13 @@
             get lastGestureInferenceMs() { return Math.round(state.lastHandProcessTime || 0); },
             get longTaskCount() { return state.longTaskCount; },
             get cardDepth() { return CARD_WORLD_DEPTH; },
+            get cardRadius() { return quality.radius; },
+            get cardDepthOffset() { return quality.depthOffset; },
+            get cardScale() { return quality.cardScale; },
+            get viewport() {
+                const viewport = viewportMetrics();
+                return `${viewport.width}x${viewport.height}`;
+            },
             get cursorGlowVisible() { return !!(cursorGlow && cursorGlow.visible); },
             get explosionVisible() { return !!(explosionSystem && explosionSystem.visible); },
             get explosionLife() { return Number(explosionLife.toFixed(2)); },
@@ -2056,6 +2265,10 @@
     dom.gestureStartButton.addEventListener("click", requestGestureStart);
     dom.gestureToggle.addEventListener("click", startGestureMode);
     window.addEventListener("resize", resize);
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", resize);
+    }
+    window.addEventListener("orientationchange", () => window.setTimeout(resize, 120));
 
     boot().catch((error) => {
         console.error(error);
