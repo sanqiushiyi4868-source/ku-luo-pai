@@ -107,6 +107,7 @@
         handSlowFrames: 0,
         handFrameTimeouts: 0,
         handModelLoading: false,
+        cameraStarting: false,
         frameCount: 0,
         fpsWindowStart: performance.now(),
         slowFrames: 0,
@@ -1612,6 +1613,7 @@
             state.handStream.getTracks().forEach((track) => track.stop());
             state.handStream = null;
         }
+        dom.webcam.pause();
         dom.webcam.srcObject = null;
         clearWebcamOverlay();
         dom.webcamWrap.hidden = true;
@@ -1628,19 +1630,47 @@
         state.handFrameInterval = state.gestureTargetInterval;
         state.handLostFrames = 0;
         releaseLostHand();
+        state.currentInputSource = "mouse";
+        dom.gestureToggle.classList.remove("is-active");
+        dom.gestureToggle.textContent = "手势";
+        dom.gestureToggle.title = "开启摄像头手势模式";
+        dom.gestureToggle.setAttribute("aria-pressed", "false");
+        applyResponsiveCardLayout();
         setGestureStatus("手势待机", "idle", true);
     }
 
-    async function waitForVideoReady(video) {
-        if (video.readyState >= 2) {
-            return;
-        }
-        await new Promise((resolve, reject) => {
-            const timer = window.setTimeout(() => reject(new Error("摄像头画面加载超时")), 7000);
-            video.onloadedmetadata = () => {
+    function withTimeout(promise, ms, message) {
+        let timer;
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = window.setTimeout(() => reject(new Error(message)), ms);
+            })
+        ]).finally(() => window.clearTimeout(timer));
+    }
+
+    function waitForVideoReady(video) {
+        return new Promise((resolve, reject) => {
+            const events = ["loadedmetadata", "loadeddata", "canplay", "playing", "resize"];
+            const cleanup = () => {
                 window.clearTimeout(timer);
-                resolve();
+                events.forEach((name) => video.removeEventListener(name, check));
+                video.removeEventListener("error", fail);
             };
+            const check = () => {
+                if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+                    cleanup();
+                    resolve();
+                }
+            };
+            const fail = () => {
+                cleanup();
+                reject(new Error("摄像头画面不可用，请检查设备后重试"));
+            };
+            const timer = window.setTimeout(fail, 10000);
+            events.forEach((name) => video.addEventListener(name, check));
+            video.addEventListener("error", fail);
+            check();
         });
     }
 
@@ -1742,7 +1772,12 @@
 
         state.gestureFrameCreating = true;
         try {
+            const worker = state.gestureWorker;
             const bitmap = await createGestureBitmap();
+            if (!state.handModeStarted || state.gestureWorker !== worker) {
+                bitmap.close();
+                return;
+            }
             state.gestureFramePending = true;
             state.lastGestureFrameAt = now;
             state.gestureWorker.postMessage({
@@ -1880,6 +1915,9 @@
             return true;
         }
 
+        if (state.cameraStarting) return false;
+        state.cameraStarting = true;
+        let cameraRequestActive = true;
         dom.gestureToggle.disabled = true;
         dom.gestureStartButton.disabled = true;
         setStatus("正在检查摄像头环境");
@@ -1904,7 +1942,7 @@
 
             setStatus("正在请求摄像头权限");
             const workerReady = initializeGestureWorker().catch((error) => error);
-            const stream = await navigator.mediaDevices.getUserMedia({
+            const stream = await withTimeout(navigator.mediaDevices.getUserMedia({
                 audio: false,
                 video: {
                     facingMode: "user",
@@ -1912,13 +1950,21 @@
                     height: { ideal: 320 },
                     frameRate: { ideal: 24, max: 24 }
                 }
-            });
+            }).then((result) => {
+                if (!cameraRequestActive) {
+                    result.getTracks().forEach((track) => track.stop());
+                    throw new Error("摄像头请求已过期，请重试");
+                }
+                return result;
+            }), 30000, "摄像头授权等待超时，请允许权限后重试");
 
             state.handStream = stream;
             dom.webcam.srcObject = stream;
             dom.webcamWrap.hidden = false;
-            await waitForVideoReady(dom.webcam);
-            await dom.webcam.play();
+            await Promise.all([
+                waitForVideoReady(dom.webcam),
+                withTimeout(dom.webcam.play(), 10000, "摄像头播放超时，请重试")
+            ]);
 
             state.handModeStarted = true;
             state.lastGestureFrameAt = 0;
@@ -1926,10 +1972,12 @@
             clearWebcamOverlay();
             applyCameraPerformanceProfile("gesture start");
             dom.gestureToggle.classList.add("is-active");
-            dom.gestureToggle.textContent = "手势中";
+            dom.gestureToggle.textContent = "关闭手势";
+            dom.gestureToggle.title = "关闭摄像头手势模式";
+            dom.gestureToggle.setAttribute("aria-pressed", "true");
             setGestureStatus("摄像头已开", "ready", true);
             setStatus("摄像头已开启，正在加载手势识别模型");
-            const workerResult = await workerReady;
+            const workerResult = await withTimeout(workerReady, 45000, "手势模型加载超时，请检查网络后重试");
             if (workerResult instanceof Error) {
                 throw workerResult;
             }
@@ -1940,16 +1988,19 @@
         } catch (error) {
             const stage = state.handModeStarted ? "gesture:init" : "camera:getUserMedia";
             reportStage(stage, error);
+            const cameraWasReady = state.handModeStarted;
             stopHandStream();
             const message = error.message && error.message.includes("摄像头")
                 ? error.message
-                : state.handModeStarted
+                : cameraWasReady
                     ? `手势识别初始化失败：${error.message || error.name || "未知错误"}`
                     : cameraFailureMessage(error);
             setStatus(message, "warn");
             dom.gestureToggle.textContent = "手势";
             return false;
         } finally {
+            cameraRequestActive = false;
+            state.cameraStarting = false;
             dom.gestureToggle.disabled = false;
             dom.gestureStartButton.disabled = false;
         }
@@ -1980,15 +2031,8 @@
             return;
         }
 
-        dom.gestureStartButton.disabled = true;
-        dom.touchStartButton.disabled = true;
-        const ok = await startGestureMode();
-        if (ok) {
-            requestStart();
-        } else {
-            dom.touchStartButton.disabled = false;
-            dom.gestureStartButton.disabled = false;
-        }
+        requestStart();
+        await startGestureMode();
     }
 
     function fitCardScaleToViewport(baseScale, targetZ, fill = 0.78) {
@@ -2027,8 +2071,12 @@
                 card.targetX = Math.sin(angle) * horizontalRadius;
                 card.targetY = Math.sin(angle * 2) * 0.12;
                 card.targetZ = quality.depthOffset - Math.cos(angle) * quality.radius;
-                card.targetRotY = angle + Math.PI;
-                card.targetRotX = pointerNDC.y !== -999 ? pointerNDC.y * 0.08 : 0;
+                // Face the ellipse centre using its actual horizontal/depth radii.
+                card.targetRotY = Math.atan2(
+                    Math.sin(angle) * horizontalRadius,
+                    Math.cos(angle) * quality.radius
+                ) + Math.PI;
+                card.targetRotX = pointerNDC.y !== -999 ? pointerNDC.y * (state.handModeStarted ? 0.035 : 0.08) : 0;
                 card.targetScaleX = quality.cardScale;
                 card.targetScaleY = quality.cardScale;
                 card.targetScaleZ = quality.cardScale;
@@ -2275,7 +2323,14 @@
     dom.startButton.addEventListener("click", requestStart);
     dom.touchStartButton.addEventListener("click", requestStart);
     dom.gestureStartButton.addEventListener("click", requestGestureStart);
-    dom.gestureToggle.addEventListener("click", startGestureMode);
+    dom.gestureToggle.addEventListener("click", () => {
+        if (state.handModeStarted) {
+            stopHandStream();
+            setStatus("手势已关闭，可用触摸或鼠标操作");
+        } else {
+            void startGestureMode();
+        }
+    });
     window.addEventListener("resize", resize);
     if (window.visualViewport) {
         window.visualViewport.addEventListener("resize", resize);
