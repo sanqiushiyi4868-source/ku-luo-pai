@@ -91,8 +91,12 @@ function installWorker() {
             landmarks[0] = { x: .5, y: .85, z: 0 };
             landmarks[5] = { x: .35, y: .6, z: 0 };
             landmarks[17] = { x: .65, y: .6, z: 0 };
-            landmarks[8] = { x: window.handX ?? .5, y: .5, z: 0 };
+            landmarks[8] = { x: .5, y: .5, z: 0 };
             landmarks[4] = { x: window.testPose === 'pinch' ? landmarks[8].x + .02 : .8, y: .5, z: 0 };
+            for (const point of landmarks) {
+                point.x += (window.handX ?? .5) - .5;
+                point.y += (window.handY ?? .5) - .5;
+            }
             setTimeout(() => { if (!this.closed) this.onmessage?.({ data: {
                 type: 'result', hands: window.testPose === 'none' ? 0 : 1,
                 landmarks, gesture: window.testPose === 'pinch' ? 'Closed_Fist' : 'Open_Palm', inferenceMs: 12
@@ -186,6 +190,69 @@ test('hand pinch, mouse isolation, open-hand release and lost-hand release', asy
         await page.evaluate(() => { window.testPose = 'none'; });
         await page.waitForFunction(() => !testApp.state.activeCard);
         assert.deepEqual(page.errors, []);
+    } finally { await page.close(); }
+});
+
+test('held card follows mouse on both axes with directional gold rim, deck stays upright', async () => {
+    const page = await open();
+    try {
+        await page.mouse.move(720, 450); await page.mouse.down();
+        await page.waitForFunction(() => testApp.state.activeCard?.state === 'GRABBED');
+        await page.waitForFunction(() => Math.abs(testApp.state.activeCard.mesh.rotation.y) < .03);
+        await page.mouse.move(1200, 190);
+        await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y > .13 && testApp.state.activeCard.mesh.rotation.x > .07);
+        const rim = await page.evaluate(() => {
+            const c = testApp.state.activeCard;
+            return { visible: c.mesh.userData.rim.visible, aim: c.mesh.userData.rim.material.uniforms.uAim.value.toArray(), strength: c.mesh.userData.rim.material.uniforms.uStrength.value };
+        });
+        assert.equal(rim.visible, true);
+        assert.ok(rim.aim[0] > .5 && rim.aim[1] > .4 && rim.strength > 1);
+        assert.ok((await layout(page)).tilt.every(angle => angle === 0));
+        await save(page, 'tilt-gold-right');
+        await page.mouse.move(200, 720);
+        await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y < -.12 && testApp.state.activeCard.mesh.rotation.x < -.06);
+        assert.ok(await page.evaluate(() => testApp.state.activeCard.mesh.userData.rim.material.uniforms.uAim.value.x < -.5));
+        await save(page, 'tilt-gold-left');
+        await page.mouse.up();
+        await page.waitForFunction(() => testApp.cards().some(c => c.state === 'REVEALED' && c.targetRotX === 0 && c.targetRotY === 0));
+        assert.deepEqual(page.errors, []);
+    } finally { await page.close(); }
+});
+
+test('held card follows mirrored hand movement and preserves the gold rim', async () => {
+    const page = await open({}, 'live', true);
+    try {
+        await startCamera(page);
+        await page.evaluate(() => { window.testPose = 'pinch'; });
+        await page.waitForFunction(() => testApp.state.activeCard?.state === 'GRABBED');
+        await page.waitForFunction(() => Math.abs(testApp.state.activeCard.mesh.rotation.y) < .03);
+        await page.evaluate(() => { window.handX = .2; window.handY = .2; });
+        await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y > .04 && testApp.state.activeCard.mesh.rotation.x > .02);
+        assert.ok(await page.evaluate(() => testApp.state.activeCard.mesh.userData.rim.visible));
+        await save(page, 'tilt-hand');
+        await page.evaluate(() => { window.handX = .8; window.handY = .8; });
+        await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y < -.04 && testApp.state.activeCard.mesh.rotation.x < -.04);
+        assert.ok((await layout(page)).tilt.every(angle => angle === 0));
+        assert.deepEqual(page.errors, []);
+    } finally { await page.close(); }
+});
+
+test('native realtime preview keeps advancing while inference is busy and only latest frames are sent', async () => {
+    const page = await open({}, 'live', true);
+    try {
+        await startCamera(page);
+        assert.equal(await page.locator('#webcam').isVisible(), true);
+        assert.equal(await page.locator('#webcam-preview').isVisible(), false);
+        assert.equal(await page.locator('#webcam').evaluate(el => getComputedStyle(el).objectFit), 'contain');
+        await page.evaluate(() => { window.testWorkerMode = 'stalled'; });
+        await page.waitForFunction(() => __clowPerf.gestureFramePending);
+        const sent = await page.evaluate(() => __clowPerf.gestureFrameId);
+        const before = await page.locator('#webcam').screenshot();
+        await page.waitForTimeout(350);
+        const after = await page.locator('#webcam').screenshot();
+        assert.notDeepEqual(before, after, 'Visible camera pixels must change during stalled inference');
+        assert.equal(await page.evaluate(() => __clowPerf.gestureFrameId), sent, 'Do not queue frames while a worker result is pending');
+        assert.equal(await page.evaluate(() => __clowPerf.cameraStatus), 'live');
     } finally { await page.close(); }
 });
 
@@ -291,9 +358,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }
             await page.mouse.down();
             await page.waitForFunction(() => testApp.state.activeCard?.state === 'GRABBED');
             await page.waitForTimeout(1100);
+            await page.mouse.move(viewport.width * .93, viewport.height * .7);
+            await page.waitForTimeout(400);
             const bounds = await page.evaluate(() => {
                 const card = testApp.state.activeCard;
-                const corners = [[-.8, -1.8], [.8, 1.8]].map(([x, y]) =>
+                const corners = [[-.8, -1.8], [.8, 1.8], [-.8, 1.8], [.8, -1.8]].map(([x, y]) =>
                     new THREE.Vector3(x, y, 0).applyMatrix4(card.mesh.matrixWorld).project(testApp.camera()));
                 return corners.map(v => ({ x: v.x, y: v.y }));
             });

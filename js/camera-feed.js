@@ -5,7 +5,11 @@
         constructor(video, canvas, onStatus, onFailure) {
             this.video = video;
             this.canvas = canvas;
-            this.ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+            this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+            const healthCanvas = document.createElement("canvas");
+            healthCanvas.width = 32;
+            healthCanvas.height = 24;
+            this.healthCtx = healthCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
             this.onStatus = onStatus;
             this.onFailure = onFailure;
             this.session = 0;
@@ -13,7 +17,9 @@
         }
 
         setStatus(status, message) {
+            if (status === this.status && message === this.statusMessage) return;
             this.status = status;
+            this.statusMessage = message;
             this.onStatus(status, message);
         }
 
@@ -33,6 +39,7 @@
             this.video.srcObject = null;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             this.status = "off";
+            this.fps = 0;
         }
 
         async start(deviceId) {
@@ -51,7 +58,7 @@
                         audio: false,
                         video: {
                             ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
-                            width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }
+                            width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 }
                         }
                     }).then(stream => {
                         if (!current()) {
@@ -79,6 +86,9 @@
                 this.darkSince = null;
                 this.lastCheckAt = 0;
                 this.frameCount = 0;
+                this.fps = 0;
+                this.fpsStartedAt = performance.now();
+                this.fpsFrameCount = 0;
                 await Promise.race([new Promise((resolve, reject) => {
                     this.firstFrame = resolve;
                     this.frameError = reject;
@@ -104,22 +114,21 @@
                     this.lastVideoTime = video.currentTime;
                     const now = performance.now();
                     this.lastFrameAt = now;
-                    // Copy decoded pixels once. Both preview and inference use this same frame.
-                    const width = 320;
-                    const height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth));
-                    if (this.canvas.width !== width || this.canvas.height !== height) {
-                        this.canvas.width = width;
-                        this.canvas.height = height;
-                        this.canvas.style.aspectRatio = `${width} / ${height}`;
-                    }
-                    this.ctx.drawImage(video, 0, 0, width, height);
+                    // The visible video plays natively at camera speed, independent of inference.
                     ++this.frameCount;
+                    ++this.fpsFrameCount;
+                    if (now - this.fpsStartedAt >= 1000) {
+                        this.fps = this.fpsFrameCount * 1000 / (now - this.fpsStartedAt);
+                        this.fpsFrameCount = 0;
+                        this.fpsStartedAt = now;
+                    }
                     if (now - this.lastCheckAt > 500 || this.frameCount === 1) {
                         this.lastCheckAt = now;
-                        const pixels = this.ctx.getImageData(0, 0, width, height).data;
+                        this.healthCtx.drawImage(video, 0, 0, 32, 24);
+                        const pixels = this.healthCtx.getImageData(0, 0, 32, 24).data;
                         let light = 0;
                         let count = 0;
-                        for (let i = 0; i < pixels.length; i += 64) {
+                        for (let i = 0; i < pixels.length; i += 4) {
                             light += Math.max(pixels[i], pixels[i + 1], pixels[i + 2]);
                             ++count;
                         }
@@ -133,6 +142,7 @@
                     }
                     this.firstFrame?.();
                     this.firstFrame = null;
+                    this.onFrame?.(now);
                 }
             } catch (error) {
                 this.frameError?.(error);
@@ -147,6 +157,17 @@
             } else {
                 this.poll = setTimeout(() => this.readFrame(session), 40);
             }
+        }
+
+        capture(width) {
+            const height = Math.max(1, Math.round(width * this.video.videoHeight / this.video.videoWidth));
+            if (this.canvas.width !== width || this.canvas.height !== height) {
+                this.canvas.width = width;
+                this.canvas.height = height;
+            }
+            // One resize/copy per inference, no full-frame CPU readback or second resize.
+            this.ctx.drawImage(this.video, 0, 0, width, height);
+            return this.canvas;
         }
 
         watch(session) {

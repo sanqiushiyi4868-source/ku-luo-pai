@@ -15,7 +15,7 @@
     const RAW_BASE = ".";
     const MEDIAPIPE_BASE = "assets/vendor/mediapipe";
     const TASKS_BASE = `${MEDIAPIPE_BASE}/tasks`;
-    const GESTURE_WORKER_URL = "js/gesture-worker.js?v=20260912";
+    const GESTURE_WORKER_URL = "js/gesture-worker.js?v=20260912-interaction-2";
     const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
     const CARD_WORLD_WIDTH = 1.6;
@@ -25,12 +25,9 @@
     const CARD_EDGE_SEGMENTS = 10;
     const RELEASE_BURST_LIGHT_MS = 820;
     const HAS_COARSE_POINTER = window.matchMedia("(pointer: coarse)").matches;
-    const HAND_FRAME_INTERVAL = HAS_COARSE_POINTER ? 118 : 92;
+    const HAND_FRAME_INTERVAL = 1000 / (HAS_COARSE_POINTER ? 24 : 30);
     const HAND_SAMPLE_WIDTH = HAS_COARSE_POINTER ? 224 : 256;
-    const HAND_SAMPLE_HEIGHT = HAS_COARSE_POINTER ? 168 : 192;
-    const HAND_MIN_SAMPLE_WIDTH = 224;
-    const HAND_MIN_SAMPLE_HEIGHT = 168;
-    const HAND_ACTION_DEBOUNCE_MS = 120;
+    const HAND_ACTION_DEBOUNCE_MS = 80;
     const HAND_CONNECTIONS = [
         [0, 1], [1, 2], [2, 3], [3, 4],
         [0, 5], [5, 6], [6, 7], [7, 8],
@@ -58,6 +55,7 @@
         webcamPreview: document.getElementById("webcam-preview"),
         cameraSelect: document.getElementById("camera-select"),
         cameraMessage: document.getElementById("camera-message"),
+        cameraFps: document.getElementById("camera-fps"),
         webcamOverlay: document.getElementById("webcam-overlay"),
         gestureToggle: document.getElementById("gesture-toggle"),
         gestureStatus: document.getElementById("gesture-status"),
@@ -92,13 +90,18 @@
         gestureFrameCreating: false,
         gestureFrameId: 0,
         gestureTimerId: null,
-        gestureVideoCallbackId: null,
         webcamOverlayCtx: null,
         handFrameInterval: HAND_FRAME_INTERVAL,
         gestureTargetInterval: HAND_FRAME_INTERVAL,
         gestureSampleWidth: HAND_SAMPLE_WIDTH,
-        gestureSampleHeight: HAND_SAMPLE_HEIGHT,
         lastGestureFrameAt: 0,
+        lastGestureVideoTime: -1,
+        inferenceAverage: 0,
+        recognitionFps: 0,
+        recognitionFrames: 0,
+        recognitionWindowAt: 0,
+        lastCameraFpsAt: 0,
+        lastInputAt: 0,
         lastGestureResultAt: 0,
         lastHandProcessTime: 0,
         lastHandSeenAt: 0,
@@ -106,7 +109,6 @@
         lastGestureStatusText: "",
         handActionScore: 0,
         lastHandActionAt: 0,
-        handSlowFrames: 0,
         handFrameTimeouts: 0,
         handModelLoading: false,
         cameraStarting: false,
@@ -495,6 +497,7 @@
     let scene;
     let camera;
     let focusScene;
+    let focusGoldLight;
     let renderer;
     let clock;
     let raycaster;
@@ -513,6 +516,7 @@
     let sharedEdgeGeometry;
     let sharedEdgeMat;
     let sharedBackMat;
+    let sharedRimGeometry;
     let cards = [];
     let clowData = [];
 
@@ -534,6 +538,41 @@
         group.userData.frontFace = frontFace;
         group.userData.backFace = backFace;
         group.userData.edge = edge;
+        // One lightweight outline quad; no full-screen bloom pass.
+        if (!sharedRimGeometry) sharedRimGeometry = new THREE.PlaneGeometry(1.92, 3.92);
+        const rim = new THREE.Mesh(sharedRimGeometry, new THREE.ShaderMaterial({
+            uniforms: { uAim: { value: new THREE.Vector2() }, uStrength: { value: 0 } },
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+            vertexShader: `
+                varying vec2 vPoint;
+                void main() {
+                    vPoint = position.xy;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vPoint;
+                uniform vec2 uAim;
+                uniform float uStrength;
+                void main() {
+                    vec2 q = abs(vPoint) - vec2(0.64, 1.64);
+                    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.16;
+                    vec2 side = normalize(vPoint / vec2(0.8, 1.8));
+                    float facing = 0.5 + 0.5 * dot(side, normalize(uAim + vec2(0.001)));
+                    float glint = 0.36 + 0.64 * pow(max(facing, 0.0), 3.0);
+                    float alpha = (exp(-abs(d) * 110.0) + 0.3 * exp(-abs(d) * 24.0)) * glint * uStrength;
+                    if (alpha < 0.004) discard;
+                    vec3 gold = mix(vec3(1.0, 0.55, 0.08), vec3(1.0, 0.9, 0.5), facing);
+                    gl_FragColor = vec4(gold, min(alpha, 1.0));
+                }
+            `
+        }));
+        rim.position.z = CARD_WORLD_DEPTH / 2 + 0.012;
+        rim.renderOrder = 2;
+        rim.raycast = () => {};
+        rim.visible = false;
+        group.add(rim);
+        group.userData.rim = rim;
         return group;
     }
 
@@ -571,6 +610,9 @@
         const focusLight = new THREE.PointLight(0xffe5cc, 0.45);
         focusLight.position.set(0, 2, 4);
         focusScene.add(focusLight);
+        focusGoldLight = new THREE.PointLight(0xffcf66, 0, 12, 1);
+        focusGoldLight.position.set(0, 1, -3);
+        focusScene.add(focusGoldLight);
         scene.background = new THREE.Color(0x050308);
 
         const fov = quality.cards >= 18 ? 36 : 46;
@@ -988,6 +1030,7 @@
 
         const prewarmMesh = createCardMesh(sharedBackMat);
         prewarmMesh.frustumCulled = false;
+        prewarmMesh.userData.rim.visible = true;
         prewarmMesh.position.set(999, 999, -10);
         scene.add(prewarmMesh);
         for (const card of clowData) {
@@ -995,6 +1038,11 @@
             renderer.compile(scene, camera);
         }
         scene.remove(prewarmMesh);
+        // Compile the foreground lighting variant before the first pick as well.
+        focusScene.add(prewarmMesh);
+        renderer.compile(focusScene, camera);
+        focusScene.remove(prewarmMesh);
+        prewarmMesh.userData.rim.material.dispose();
 
         if (explosionSystem && explosionMaterial) {
             const wasVisible = explosionSystem.visible;
@@ -1217,7 +1265,10 @@
         dom.cursorRing.classList.toggle("is-touch", source === "touch");
         const viewport = viewportMetrics();
 
-        const easing = source === "hand" ? 0.38 : 0.42;
+        const inputTime = performance.now();
+        const inputDelta = state.lastInputAt ? Math.min(100, inputTime - state.lastInputAt) : 100;
+        state.lastInputAt = inputTime;
+        const easing = source === "hand" ? 1 - Math.exp(-inputDelta / 28) : 1;
         state.cursorX += (rawX - state.cursorX) * easing;
         state.cursorY += (rawY - state.cursorY) * easing;
 
@@ -1413,11 +1464,14 @@
             return null;
         }
 
-        const width = Math.max(1, Math.round(dom.webcamPreview.clientWidth || 1));
-        const height = Math.max(1, Math.round(dom.webcamPreview.clientHeight || 1));
+        const box = dom.webcam.parentElement;
+        const ratio = dom.webcam.videoWidth / dom.webcam.videoHeight || 4 / 3;
+        const width = Math.max(1, Math.round(Math.min(box.clientWidth, box.clientHeight * ratio)));
+        const height = Math.max(1, Math.round(width / ratio));
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
-        canvas.style.left = `${dom.webcamPreview.offsetLeft}px`;
+        canvas.style.left = `${(box.clientWidth - width) / 2}px`;
+        canvas.style.top = `${(box.clientHeight - height) / 2}px`;
         if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
             canvas.height = height;
@@ -1533,7 +1587,7 @@
             clearWebcamOverlay();
         }
         setGestureStatus(gestureDebugText("请将手放入画面", payload), "warn");
-        if (state.handLostFrames > 3 && state.currentInputSource === "hand") {
+        if (performance.now() - state.lastHandSeenAt > 250 && state.currentInputSource === "hand") {
             releaseLostHand();
         }
     }
@@ -1578,6 +1632,14 @@
         setGestureStatus("摄像头中断", "warn", true);
         setStatus(message, "warn");
     });
+    cameraFeed.onFrame = now => {
+        if (now - state.lastCameraFpsAt >= 1000) {
+            state.lastCameraFpsAt = now;
+            const recognitionFps = now - state.lastGestureResultAt < 1000 ? state.recognitionFps : 0;
+            dom.cameraFps.textContent = `画面 ${Math.round(cameraFeed.fps)} · 识别 ${Math.round(recognitionFps)} FPS`;
+        }
+        void maybeSendGestureFrame();
+    };
 
     async function refreshCameraChoices() {
         if (!navigator.mediaDevices?.enumerateDevices || !cameraFeed.stream) return;
@@ -1609,14 +1671,6 @@
             window.clearTimeout(state.gestureTimerId);
             state.gestureTimerId = null;
         }
-        if (state.gestureVideoCallbackId !== null && dom.webcam.cancelVideoFrameCallback) {
-            try {
-                dom.webcam.cancelVideoFrameCallback(state.gestureVideoCallbackId);
-            } catch (error) {
-                reportStage("gesture:frame", error, "log");
-            }
-            state.gestureVideoCallbackId = null;
-        }
         if (state.gestureWorker) {
             state.gestureWorker.terminate();
             state.gestureWorker = null;
@@ -1640,6 +1694,11 @@
         state.gestureFrameCreating = false;
         state.handModelLoading = false;
         state.handFrameInterval = state.gestureTargetInterval;
+        state.inferenceAverage = 0;
+        state.lastGestureVideoTime = -1;
+        state.recognitionFps = 0;
+        state.recognitionFrames = 0;
+        dom.cameraFps.textContent = "画面 — · 识别 —";
         state.handLostFrames = 0;
         state.lastHandSeenAt = 0;
         state.lastGestureResultAt = 0;
@@ -1680,52 +1739,26 @@
 
     async function createGestureBitmap() {
         if (!window.createImageBitmap) throw new Error("当前浏览器不支持图像采样，请使用新版 Chrome、Edge 或 Safari");
-        return createImageBitmap(dom.webcamPreview, {
-            resizeWidth: state.gestureSampleWidth,
-            resizeHeight: Math.max(1, Math.round(state.gestureSampleWidth * dom.webcamPreview.height / dom.webcamPreview.width)),
-            resizeQuality: "low"
-        });
+        return createImageBitmap(cameraFeed.capture(state.gestureSampleWidth));
     }
 
     function updateGesturePerformance(inferenceMs) {
-        if (inferenceMs > 78) {
-            state.handSlowFrames += 1;
-            state.handFrameInterval = Math.min(180, state.handFrameInterval + 14);
-            setGestureStatus(gestureDebugText("识别降频", { hands: 1, inferenceMs }), "warn");
-            reportStage("gesture:frame", `slow ${Math.round(inferenceMs)}ms, interval ${state.handFrameInterval}ms`, "log");
-            if (state.handSlowFrames >= 2 && state.gestureSampleWidth > HAND_MIN_SAMPLE_WIDTH) {
-                state.gestureSampleWidth = HAND_MIN_SAMPLE_WIDTH;
-                state.gestureSampleHeight = HAND_MIN_SAMPLE_HEIGHT;
-                applyCameraPerformanceProfile("gesture slow");
-            }
-        } else if (inferenceMs < 46 && state.handFrameInterval > state.gestureTargetInterval) {
-            state.handSlowFrames = Math.max(0, state.handSlowFrames - 1);
-            state.handFrameInterval = Math.max(state.gestureTargetInterval, state.handFrameInterval - 6);
+        // Smooth actual cost instead of permanently lowering the rate after a cold first frame.
+        state.inferenceAverage = state.inferenceAverage ? state.inferenceAverage * 0.8 + inferenceMs * 0.2 : inferenceMs;
+        state.handFrameInterval = Math.max(state.gestureTargetInterval, Math.min(150, state.inferenceAverage * 1.1));
+        const now = performance.now();
+        ++state.recognitionFrames;
+        if (now - state.recognitionWindowAt >= 1000) {
+            state.recognitionFps = state.recognitionFrames * 1000 / (now - state.recognitionWindowAt);
+            state.recognitionFrames = 0;
+            state.recognitionWindowAt = now;
+            dom.cameraFps.textContent = `画面 ${Math.round(cameraFeed.fps)} · 识别 ${Math.round(state.recognitionFps)} FPS`;
         }
     }
 
     function scheduleGestureLoop() {
-        if (!state.handModeStarted || !state.gestureWorkerReady) {
-            return;
-        }
-        if (state.gestureTimerId || state.gestureVideoCallbackId !== null) {
-            return;
-        }
-
-        if (dom.webcam.requestVideoFrameCallback) {
-            state.gestureVideoCallbackId = dom.webcam.requestVideoFrameCallback(() => {
-                state.gestureVideoCallbackId = null;
-                maybeSendGestureFrame();
-                scheduleGestureLoop();
-            });
-            return;
-        }
-
-        state.gestureTimerId = window.setTimeout(() => {
-            state.gestureTimerId = null;
-            maybeSendGestureFrame();
-            scheduleGestureLoop();
-        }, 33);
+        // Frame arrival and worker completion both wake the same one-in-flight scheduler.
+        void maybeSendGestureFrame();
     }
 
     async function maybeSendGestureFrame() {
@@ -1737,7 +1770,13 @@
         }
 
         const now = performance.now();
-        if (now - state.lastGestureFrameAt < state.handFrameInterval) {
+        if (cameraFeed.lastVideoTime === state.lastGestureVideoTime) return;
+        const remaining = state.handFrameInterval - (now - state.lastGestureFrameAt);
+        if (remaining > 2) {
+            if (!state.gestureTimerId) state.gestureTimerId = window.setTimeout(() => {
+                state.gestureTimerId = null;
+                void maybeSendGestureFrame();
+            }, remaining);
             return;
         }
 
@@ -1746,6 +1785,7 @@
         let bitmap;
         try {
             const worker = state.gestureWorker;
+            state.lastGestureVideoTime = cameraFeed.lastVideoTime;
             bitmap = await createGestureBitmap();
             if (session !== state.cameraSession || !state.handModeStarted || state.gestureWorker !== worker) {
                 bitmap.close();
@@ -1835,6 +1875,7 @@
             state.gestureFramePending = false;
             updateGesturePerformance(data.inferenceMs || 0);
             onGestureResult(data);
+            scheduleGestureLoop();
         }
     }
 
@@ -1908,6 +1949,9 @@
             if (session !== state.cameraSession) return false;
             state.handModeStarted = true;
             state.lastGestureFrameAt = 0;
+            state.lastGestureVideoTime = -1;
+            state.recognitionWindowAt = performance.now();
+            state.lastInputAt = 0;
             state.handFrameTimeouts = 0;
             state.gestureErrorCount = 0;
             state.lastPointerX = null;
@@ -2036,13 +2080,23 @@
                 const verticalWorld = 2 * Math.tan(camera.fov * Math.PI / 360) * Math.abs(targetZ);
                 card.targetY = viewport.aspect < 0.85 ? verticalWorld * 40 / viewport.height : 0;
                 card.targetZ = targetZ;
-                card.targetRotX = 0;
-                card.targetRotY = 0;
+                const aimX = pointerNDC.x === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.x, -1, 1);
+                const aimY = pointerNDC.y === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.y, -1, 1);
+                card.targetRotX = isReveal ? 0 : aimY * 0.16;
+                card.targetRotY = isReveal ? 0 : aimX * 0.24;
                 card.targetScaleX = targetScale;
                 card.targetScaleY = targetScale;
                 card.targetScaleZ = targetScale;
-
-
+            }
+            const rim = card.mesh.userData.rim;
+            rim.visible = card.state === "GRABBED" || card.state === "REVEALED";
+            if (rim.visible) {
+                const aimX = pointerNDC.x === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.x, -1, 1);
+                const aimY = pointerNDC.y === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.y, -1, 1);
+                const rimAim = rim.material.uniforms.uAim.value;
+                rimAim.x += (aimX - rimAim.x) * easing;
+                rimAim.y += (aimY - rimAim.y) * easing;
+                rim.material.uniforms.uStrength.value = 0.55 + Math.min(1, Math.hypot(aimX, aimY)) * 0.7;
             }
 
             if (card.state !== "DESTROYED") {
@@ -2085,6 +2139,12 @@
         }
 
         const lightActive = !!state.activeCard || now < state.revealLightUntil || (explosionSystem && explosionSystem.visible);
+        const lightEase = 1 - Math.exp(-delta * 12);
+        const focusAimX = pointerNDC.x === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.x, -1, 1);
+        const focusAimY = pointerNDC.y === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.y, -1, 1);
+        focusGoldLight.position.x += (focusAimX * 3 - focusGoldLight.position.x) * lightEase;
+        focusGoldLight.position.y += (focusAimY * 3 - focusGoldLight.position.y) * lightEase;
+        focusGoldLight.intensity += ((lightActive ? 0.28 : 0) - focusGoldLight.intensity) * lightEase;
         if (lightActive) {
             const target = pointerLightTarget();
             goldLight.position.x += (target.x - goldLight.position.x) * 0.18;
@@ -2243,11 +2303,13 @@
             get pixelRatio() { return quality.pixelRatio; },
             get cameraStatus() { return cameraFeed.status; },
             get cameraFrames() { return cameraFeed.frameCount || 0; },
+            get cameraFps() { return Math.round(cameraFeed.fps || 0); },
+            get recognitionFps() { return Math.round(state.recognitionFps); },
             get gestureReady() { return state.gestureWorkerReady; },
             get gestureLoading() { return state.gestureWorkerLoading; },
             get gestureWarmupStarted() { return state.gestureWarmupStarted; },
             get gestureInterval() { return state.handFrameInterval; },
-            get gestureSample() { return `${state.gestureSampleWidth}x${state.gestureSampleHeight}`; },
+            get gestureSample() { return `${dom.webcamPreview.width}x${dom.webcamPreview.height}`; },
             get gestureFrameId() { return state.gestureFrameId; },
             get gestureFramePending() { return state.gestureFramePending; },
             get handLostFrames() { return state.handLostFrames; },
