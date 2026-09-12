@@ -122,14 +122,7 @@ self.onmessage = async (event) => {
             });
         } catch (error) {
             postError("gesture:frame", error);
-            self.postMessage({
-                type: "result",
-                frameId: data.frameId,
-                hands: 0,
-                landmarks: [],
-                gesture: "",
-                inferenceMs: performance.now() - startedAt
-            });
+
         } finally {
             if (frame.close) {
                 frame.close();

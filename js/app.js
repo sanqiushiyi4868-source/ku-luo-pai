@@ -15,7 +15,8 @@
     const RAW_BASE = ".";
     const MEDIAPIPE_BASE = "assets/vendor/mediapipe";
     const TASKS_BASE = `${MEDIAPIPE_BASE}/tasks`;
-    const GESTURE_WORKER_URL = "js/gesture-worker.js";
+    const GESTURE_WORKER_URL = "js/gesture-worker.js?v=20260912";
+    const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const TOTAL_TEXTURES = CARD_FILES.length + 1;
     const CARD_WORLD_WIDTH = 1.6;
     const CARD_WORLD_HEIGHT = 3.6;
@@ -54,6 +55,9 @@
         historyTray: document.getElementById("history-tray"),
         webcamWrap: document.getElementById("webcam-container"),
         webcam: document.getElementById("webcam"),
+        webcamPreview: document.getElementById("webcam-preview"),
+        cameraSelect: document.getElementById("camera-select"),
+        cameraMessage: document.getElementById("camera-message"),
         webcamOverlay: document.getElementById("webcam-overlay"),
         gestureToggle: document.getElementById("gesture-toggle"),
         gestureStatus: document.getElementById("gesture-status"),
@@ -89,8 +93,6 @@
         gestureFrameId: 0,
         gestureTimerId: null,
         gestureVideoCallbackId: null,
-        handCanvas: null,
-        handCtx: null,
         webcamOverlayCtx: null,
         handFrameInterval: HAND_FRAME_INTERVAL,
         gestureTargetInterval: HAND_FRAME_INTERVAL,
@@ -108,6 +110,9 @@
         handFrameTimeouts: 0,
         handModelLoading: false,
         cameraStarting: false,
+        cameraSession: 0,
+        gestureWatchdog: null,
+        gestureErrorCount: 0,
         frameCount: 0,
         fpsWindowStart: performance.now(),
         slowFrames: 0,
@@ -180,66 +185,18 @@
         }
 
         const viewport = viewportMetrics();
-        const cameraMode = state.handModeStarted || state.currentInputSource === "hand";
-        const tabletLike = viewport.coarse && viewport.min >= 620 && viewport.max >= 960;
-        const compact = viewport.min < 620;
-
-        if (cameraMode) {
-            if (tabletLike) {
-                return {
-                    radius: 5.1,
-                    horizontalRadius: 2.35,
-                    depthOffset: -1.8,
-                    cardScale: 0.42,
-                    grabScale: 0.76,
-                    revealScale: 0.88
-                };
-            }
-
-            if (compact) {
-                return {
-                    radius: 4.65,
-                    horizontalRadius: 1.35,
-                    depthOffset: -2.2,
-                    cardScale: 0.35,
-                    grabScale: 0.68,
-                    revealScale: 0.8
-                };
-            }
-
-            return {
-                radius: 5.1,
-                horizontalRadius: 2.85,
-                depthOffset: -2.35,
-                cardScale: 0.44,
-                grabScale: 0.88,
-                revealScale: 0.98
-            };
-        }
-
-        if (tabletLike) {
-            return {
-                radius: 5.1,
-                horizontalRadius: 2.35,
-                depthOffset: -1.8,
-                cardScale: 0.42,
-                grabScale: 0.78,
-                revealScale: 0.9
-            };
-        }
-
-        if (compact) {
+        if (viewport.aspect < 0.85) {
             return {
                 radius: 4.65,
-                horizontalRadius: 1.35,
-                depthOffset: -2.2,
-                cardScale: 0.35,
-                grabScale: 0.72,
-                revealScale: 0.82
+                horizontalRadius: 4.65 * viewport.aspect * 0.65,
+                depthOffset: 0,
+                cardScale: 0.32,
+                grabScale: 1.17,
+                revealScale: 1.24
             };
         }
-
-        return quality.baseLayout;
+        return { radius: 8, horizontalRadius: 8, depthOffset: 0,
+            cardScale: quality.cards >= 18 ? 0.65 : 0.58, grabScale: 1.17, revealScale: 1.24 };
     }
 
     function applyResponsiveCardLayout() {
@@ -341,6 +298,7 @@
     }
 
     const quality = chooseQuality();
+    quality.basePixelRatio = quality.pixelRatio;
     quality.baseLayout = {
         radius: quality.radius,
         horizontalRadius: quality.horizontalRadius || quality.radius,
@@ -536,6 +494,7 @@
 
     let scene;
     let camera;
+    let focusScene;
     let renderer;
     let clock;
     let raycaster;
@@ -607,6 +566,11 @@
     function setupRenderer() {
         const viewport = viewportMetrics();
         scene = new THREE.Scene();
+        focusScene = new THREE.Scene();
+        focusScene.add(new THREE.AmbientLight(0xffffff, 0.68));
+        const focusLight = new THREE.PointLight(0xffe5cc, 0.45);
+        focusLight.position.set(0, 2, 4);
+        focusScene.add(focusLight);
         scene.background = new THREE.Color(0x050308);
 
         const fov = quality.cards >= 18 ? 36 : 46;
@@ -617,6 +581,7 @@
         renderer.setSize(viewport.width, viewport.height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
         renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.domElement.id = "scene-canvas";
         document.body.appendChild(renderer.domElement);
 
         clock = new THREE.Clock();
@@ -1167,6 +1132,7 @@
         const releasedCard = cardObj.data;
         setStatus(`${cardObj.data.name} 已释放`);
         cardObj.mesh.visible = false;
+        cardObj.state = "DESTROYED";
 
         const pos = new THREE.Vector3();
         cardObj.mesh.getWorldPosition(pos);
@@ -1187,6 +1153,7 @@
             cardObj.mesh.position.y = -10;
             cardObj.mesh.visible = true;
             cardObj.state = "IDLE";
+            scene.add(cardObj.mesh);
         }, 980);
     }
 
@@ -1200,7 +1167,9 @@
         state.lastReleaseAt = now;
         state.revealLightUntil = now + RELEASE_BURST_LIGHT_MS;
         setStatus(`${cardObj.data.name} 显现中`);
-        window.requestAnimationFrame(() => explodeCard(cardObj));
+        window.setTimeout(() => {
+            if (cardObj.state === "REVEALED") explodeCard(cardObj);
+        }, 360);
     }
 
     function grabCard(card) {
@@ -1208,6 +1177,7 @@
         card.data = randomCard;
         card.frontFace.material = randomCard.material;
         card.state = "GRABBED";
+        focusScene.add(card.mesh);
         card.targetScaleX = quality.grabScale;
         card.targetScaleY = quality.grabScale;
         card.targetScaleZ = quality.grabScale;
@@ -1216,40 +1186,33 @@
     }
 
     function tryGrabCard() {
-        if (state.activeCard || !raycaster || !camera) {
+        if (state.activeCard || !raycaster || !camera) return;
+        raycaster.setFromCamera(pointerNDC, camera);
+        const idle = cards.filter(card => card.state === "IDLE" && card.mesh.visible && card.mesh.position.z < -0.1);
+        // Resolve the closest hit across the entire deck, not the first array entry.
+        const hits = raycaster.intersectObjects(idle.map(card => card.mesh), true);
+        if (hits.length) {
+            const hit = idle.find(card => card.mesh === hits[0].object.parent);
+            if (hit) grabCard(hit);
             return;
         }
-
-        raycaster.setFromCamera(pointerNDC, camera);
-        let nearestHandCard = null;
-        let nearestHandDistance = Infinity;
+        if (state.currentInputSource !== "hand") return;
         const projected = new THREE.Vector3();
-        for (const card of cards) {
-            if (card.state !== "IDLE" || !card.mesh.visible) {
-                continue;
-            }
-            const intersects = raycaster.intersectObject(card.mesh, true);
-            if (intersects.length) {
-                grabCard(card);
-                return;
-            }
-
-            if (state.currentInputSource === "hand") {
-                projected.copy(card.mesh.position).project(camera);
-                const distance = Math.hypot(projected.x - pointerNDC.x, projected.y - pointerNDC.y);
-                if (distance < nearestHandDistance) {
-                    nearestHandDistance = distance;
-                    nearestHandCard = card;
-                }
-            }
+        let nearest = null;
+        let distance = 0.38;
+        for (const card of idle) {
+            projected.copy(card.mesh.position).project(camera);
+            if (Math.abs(projected.x) > 1.1 || Math.abs(projected.y) > 1.1 || Math.abs(projected.z) > 1) continue;
+            const d = Math.hypot((projected.x - pointerNDC.x) * camera.aspect, projected.y - pointerNDC.y);
+            if (d < distance) { nearest = card; distance = d; }
         }
-
-        if (nearestHandCard && nearestHandDistance < 0.56) {
-            grabCard(nearestHandCard);
-        }
+        if (nearest) grabCard(nearest);
     }
 
     function processInput(rawX, rawY, isActionDown, source) {
+        if (state.currentInputSource !== source) {
+            state.lastPointerX = null;
+        }
         state.currentInputSource = source;
         dom.cursorRing.classList.toggle("is-touch", source === "touch");
         const viewport = viewportMetrics();
@@ -1295,7 +1258,8 @@
 
     function setupPointerInput() {
         window.addEventListener("pointerdown", (event) => {
-            if (event.target.closest("button")) {
+            if (state.handModeStarted && state.lastHandSeenAt && performance.now() - state.lastHandSeenAt < 700) return;
+            if (event.target.closest(".interactive-ui, button, select")) {
                 return;
             }
             if (state.pointerId !== null) {
@@ -1308,7 +1272,8 @@
         }, { passive: false });
 
         window.addEventListener("pointermove", (event) => {
-            if (state.loadState !== "PLAYING" && event.target.closest("button")) {
+            if (state.handModeStarted && state.lastHandSeenAt && performance.now() - state.lastHandSeenAt < 700) return;
+            if (event.target.closest(".interactive-ui, button, select")) {
                 return;
             }
             if (state.pointerId !== null && event.pointerId !== state.pointerId) {
@@ -1318,6 +1283,7 @@
         }, { passive: false });
 
         const endPointer = (event) => {
+            if (!state.pointerDown) return;
             if (state.pointerId !== null && event.pointerId !== state.pointerId) {
                 return;
             }
@@ -1396,10 +1362,10 @@
         let targetScore = state.handActionScore;
         let smoothing = 0.28;
 
-        if (label.includes("closed_fist")) {
+        if (pinchRatio < 0.30 || label.includes("closed_fist")) {
             targetScore = 1;
             smoothing = 0.52;
-        } else if (label.includes("open_palm")) {
+        } else if (pinchRatio > 0.48 || label.includes("open_palm")) {
             targetScore = 0;
             smoothing = 0.52;
         } else if (pose.folded >= 3 || pinchRatio < 0.30) {
@@ -1447,8 +1413,11 @@
             return null;
         }
 
-        const width = Math.max(1, Math.round(canvas.clientWidth || dom.webcamWrap.clientWidth || 1));
-        const height = Math.max(1, Math.round(canvas.clientHeight || dom.webcamWrap.clientHeight || 1));
+        const width = Math.max(1, Math.round(dom.webcamPreview.clientWidth || 1));
+        const height = Math.max(1, Math.round(dom.webcamPreview.clientHeight || 1));
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.style.left = `${dom.webcamPreview.offsetLeft}px`;
         if (canvas.width !== width || canvas.height !== height) {
             canvas.width = width;
             canvas.height = height;
@@ -1519,26 +1488,28 @@
         const age = state.lastGestureResultAt ? Math.round(performance.now() - state.lastGestureResultAt) : 0;
         const debug = `hand=${hands} infer=${infer}ms age=${age}ms`;
         dom.gestureStatus.title = debug;
-        return `${label} ${debug}`;
+        return label;
     }
 
     function releaseLostHand() {
-        pointerNDC.set(-999, -999);
-        dom.cursorRing.style.left = "-100px";
-        state.lastPointerX = null;
         if (state.wasActionDown) {
             processInput(state.cursorX, state.cursorY, false, "hand");
         }
+        pointerNDC.set(-999, -999);
+        dom.cursorRing.style.left = "-100px";
+        state.lastPointerX = null;
         state.isHandPinching = false;
         state.handActionScore = 0;
         clearWebcamOverlay();
     }
 
     function onGestureResult(payload) {
+        if (!state.handModeStarted) return;
         state.lastGestureResultAt = performance.now();
+        if (cameraFeed.status !== "live") { releaseLostHand(); return; }
         state.lastHandProcessTime = payload.inferenceMs || 0;
 
-        if (payload.hands && payload.landmarks && payload.landmarks.length > 17) {
+        if (payload.hands && payload.landmarks && payload.landmarks.length >= 21) {
             state.handLostFrames = 0;
             state.lastHandSeenAt = performance.now();
             const landmarks = payload.landmarks;
@@ -1561,7 +1532,7 @@
         if (state.handLostFrames > 1) {
             clearWebcamOverlay();
         }
-        setGestureStatus(gestureDebugText("未识别", payload), "warn");
+        setGestureStatus(gestureDebugText("请将手放入画面", payload), "warn");
         if (state.handLostFrames > 3 && state.currentInputSource === "hand") {
             releaseLostHand();
         }
@@ -1592,7 +1563,48 @@
         return `摄像头初始化失败：${error.message || error.name || "未知错误"}`;
     }
 
+    const cameraFeed = new window.CameraFeed(dom.webcam, dom.webcamPreview, (status, message) => {
+        const wasDark = dom.webcamWrap.dataset.cameraStatus === "dark";
+        dom.webcamWrap.dataset.cameraStatus = status;
+        dom.cameraMessage.textContent = message;
+        if (status === "dark") {
+            setGestureStatus("画面过暗", "warn", true);
+            setStatus(message, "warn");
+        } else if (status === "live" && wasDark && state.gestureWorkerReady && !state.activeCard) {
+            setStatus("移动食指旋转，捏合抽取，松开释放牌灵");
+        }
+    }, message => {
+        stopHandStream();
+        setGestureStatus("摄像头中断", "warn", true);
+        setStatus(message, "warn");
+    });
+
+    async function refreshCameraChoices() {
+        if (!navigator.mediaDevices?.enumerateDevices || !cameraFeed.stream) return;
+        const session = state.cameraSession;
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            if (session !== state.cameraSession || !cameraFeed.stream) return;
+            const selected = cameraFeed.stream.getVideoTracks()[0]?.getSettings().deviceId;
+            dom.cameraSelect.replaceChildren();
+            devices.filter(device => device.kind === "videoinput").forEach((device, index) => {
+                const option = document.createElement("option");
+                option.value = device.deviceId;
+                option.textContent = device.label || `摄像头 ${index + 1}`;
+                option.selected = device.deviceId === selected;
+                dom.cameraSelect.appendChild(option);
+            });
+            dom.cameraSelect.hidden = dom.cameraSelect.options.length < 2;
+        } catch (error) { reportStage("camera:devices", error, "log"); }
+    }
+
     function stopHandStream() {
+        ++state.cameraSession;
+        state.cameraStarting = false;
+        cameraFeed.stop();
+        window.clearTimeout(state.gestureWatchdog);
+        state.gestureWatchdog = null;
+        state.gestureReadyReject?.(new DOMException("手势启动已取消", "AbortError"));
         if (state.gestureTimerId) {
             window.clearTimeout(state.gestureTimerId);
             state.gestureTimerId = null;
@@ -1629,13 +1641,19 @@
         state.handModelLoading = false;
         state.handFrameInterval = state.gestureTargetInterval;
         state.handLostFrames = 0;
+        state.lastHandSeenAt = 0;
+        state.lastGestureResultAt = 0;
+        state.pointerDown = false;
+        state.pointerId = null;
         releaseLostHand();
         state.currentInputSource = "mouse";
         dom.gestureToggle.classList.remove("is-active");
         dom.gestureToggle.textContent = "手势";
         dom.gestureToggle.title = "开启摄像头手势模式";
         dom.gestureToggle.setAttribute("aria-pressed", "false");
-        applyResponsiveCardLayout();
+        applyPerformanceLevel();
+        dom.gestureStartButton.disabled = false;
+        dom.cameraSelect.disabled = false;
         setGestureStatus("手势待机", "idle", true);
     }
 
@@ -1649,45 +1667,11 @@
         ]).finally(() => window.clearTimeout(timer));
     }
 
-    function waitForVideoReady(video) {
-        return new Promise((resolve, reject) => {
-            const events = ["loadedmetadata", "loadeddata", "canplay", "playing", "resize"];
-            const cleanup = () => {
-                window.clearTimeout(timer);
-                events.forEach((name) => video.removeEventListener(name, check));
-                video.removeEventListener("error", fail);
-            };
-            const check = () => {
-                if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-                    cleanup();
-                    resolve();
-                }
-            };
-            const fail = () => {
-                cleanup();
-                reject(new Error("摄像头画面不可用，请检查设备后重试"));
-            };
-            const timer = window.setTimeout(fail, 10000);
-            events.forEach((name) => video.addEventListener(name, check));
-            video.addEventListener("error", fail);
-            check();
-        });
-    }
-
-    function setupHandInputCanvas() {
-        if (!state.handCanvas) {
-            state.handCanvas = document.createElement("canvas");
-            state.handCtx = state.handCanvas.getContext("2d", { alpha: false, desynchronized: true });
-        }
-        state.handCanvas.width = state.gestureSampleWidth;
-        state.handCanvas.height = state.gestureSampleHeight;
-    }
-
     function applyCameraPerformanceProfile(reason) {
         const coarse = window.matchMedia("(pointer: coarse)").matches;
         quality.activeCherryParticles = Math.max(160, Math.min(quality.activeCherryParticles, Math.floor(quality.cherryParticles * 0.55)));
         quality.activeParticles = Math.max(150, Math.min(quality.activeParticles, Math.floor(quality.particles * 0.62)));
-        quality.activeCards = Math.max(8, Math.min(quality.activeCards, coarse ? 12 : 14));
+        // Keep card count and spacing stable while reducing effects.
         quality.pixelRatio = Math.min(quality.pixelRatio, coarse ? 1.0 : 1.2);
         applyResponsiveCardLayout();
         resize();
@@ -1695,24 +1679,12 @@
     }
 
     async function createGestureBitmap() {
-        if (window.createImageBitmap) {
-            try {
-                return await createImageBitmap(dom.webcam, {
-                    resizeWidth: state.gestureSampleWidth,
-                    resizeHeight: state.gestureSampleHeight,
-                    resizeQuality: "low"
-                });
-            } catch (error) {
-                reportStage("gesture:frame", `createImageBitmap(video) fallback: ${error.message || error.name}`, "log");
-            }
-        }
-
-        setupHandInputCanvas();
-        state.handCtx.drawImage(dom.webcam, 0, 0, state.handCanvas.width, state.handCanvas.height);
-        if (!window.createImageBitmap) {
-            throw new Error("当前浏览器不支持 createImageBitmap，无法高效运行手势识别");
-        }
-        return createImageBitmap(state.handCanvas);
+        if (!window.createImageBitmap) throw new Error("当前浏览器不支持图像采样，请使用新版 Chrome、Edge 或 Safari");
+        return createImageBitmap(dom.webcamPreview, {
+            resizeWidth: state.gestureSampleWidth,
+            resizeHeight: Math.max(1, Math.round(state.gestureSampleWidth * dom.webcamPreview.height / dom.webcamPreview.width)),
+            resizeQuality: "low"
+        });
     }
 
     function updateGesturePerformance(inferenceMs) {
@@ -1724,7 +1696,6 @@
             if (state.handSlowFrames >= 2 && state.gestureSampleWidth > HAND_MIN_SAMPLE_WIDTH) {
                 state.gestureSampleWidth = HAND_MIN_SAMPLE_WIDTH;
                 state.gestureSampleHeight = HAND_MIN_SAMPLE_HEIGHT;
-                setupHandInputCanvas();
                 applyCameraPerformanceProfile("gesture slow");
             }
         } else if (inferenceMs < 46 && state.handFrameInterval > state.gestureTargetInterval) {
@@ -1761,7 +1732,7 @@
         if (!state.handModeStarted || !state.gestureWorkerReady || !state.gestureWorker || dom.webcam.readyState < 2) {
             return;
         }
-        if (state.gestureFramePending || state.gestureFrameCreating) {
+        if (cameraFeed.status !== "live" || state.gestureFramePending || state.gestureFrameCreating) {
             return;
         }
 
@@ -1771,15 +1742,23 @@
         }
 
         state.gestureFrameCreating = true;
+        const session = state.cameraSession;
+        let bitmap;
         try {
             const worker = state.gestureWorker;
-            const bitmap = await createGestureBitmap();
-            if (!state.handModeStarted || state.gestureWorker !== worker) {
+            bitmap = await createGestureBitmap();
+            if (session !== state.cameraSession || !state.handModeStarted || state.gestureWorker !== worker) {
                 bitmap.close();
                 return;
             }
             state.gestureFramePending = true;
             state.lastGestureFrameAt = now;
+            window.clearTimeout(state.gestureWatchdog);
+            state.gestureWatchdog = window.setTimeout(() => {
+                stopHandStream();
+                setStatus("手势识别响应超时，请重新开启手势", "warn");
+                setGestureStatus("识别中断", "warn", true);
+            }, 8000);
             state.gestureWorker.postMessage({
                 type: "frame",
                 frameId: ++state.gestureFrameId,
@@ -1787,12 +1766,18 @@
                 bitmap
             }, [bitmap]);
         } catch (error) {
+            bitmap?.close();
+            if (session !== state.cameraSession) return;
             state.handFrameTimeouts += 1;
             state.handFrameInterval = Math.min(180, state.handFrameInterval + 18);
             setGestureStatus("识别中断", "warn", true);
             reportStage("gesture:frame", error);
+            if (state.handFrameTimeouts >= 3) {
+                stopHandStream();
+                setStatus("无法采样摄像头画面，请重新开启手势", "warn");
+            }
         } finally {
-            state.gestureFrameCreating = false;
+            if (session === state.cameraSession) state.gestureFrameCreating = false;
         }
     }
 
@@ -1819,7 +1804,7 @@
         if (data.type === "ready") {
             state.gestureWorkerReady = true;
             state.gestureWorkerLoading = false;
-            setGestureStatus("等待手 hand=0 infer=0ms age=0ms", "ready", true);
+            setGestureStatus("模型已加载", "idle", true);
             reportStage("gesture:init", "MediaPipe GestureRecognizer ready", "log");
             if (state.gestureReadyResolve) {
                 state.gestureReadyResolve(true);
@@ -1829,6 +1814,7 @@
         }
 
         if (data.type === "error") {
+            window.clearTimeout(state.gestureWatchdog);
             const error = new Error(data.message || "手势识别失败");
             error.name = data.name || "GestureError";
             reportStage(data.stage || "gesture:worker", error);
@@ -1836,11 +1822,16 @@
             if ((data.stage || "").includes("init")) {
                 setGestureStatus("模型失败", "warn", true);
                 failGestureInitialization(error);
+            } else if (++state.gestureErrorCount >= 3) {
+                stopHandStream();
+                setStatus("手势识别连续失败，请重新开启手势", "warn");
             }
             return;
         }
 
         if (data.type === "result") {
+            window.clearTimeout(state.gestureWatchdog);
+            state.gestureErrorCount = 0;
             state.gestureFramePending = false;
             updateGesturePerformance(data.inferenceMs || 0);
             onGestureResult(data);
@@ -1863,16 +1854,23 @@
             state.gestureReadyResolve = resolve;
             state.gestureReadyReject = reject;
         });
-        setGestureStatus("模型加载 hand=0 infer=0ms age=0ms", "ready", true);
+        setGestureStatus("模型加载中", "idle", true);
 
         try {
             const worker = new Worker(GESTURE_WORKER_URL, { name: "clow-gesture-worker" });
-            worker.onmessage = handleGestureWorkerMessage;
+            worker.onmessage = event => {
+                if (state.gestureWorker === worker) handleGestureWorkerMessage(event);
+            };
             worker.onerror = (event) => {
+                if (state.gestureWorker !== worker) return;
                 const error = new Error(event.message || "Gesture worker crashed");
                 reportStage("gesture:worker", error);
                 setGestureStatus("识别崩溃", "warn", true);
                 failGestureInitialization(error);
+                if (state.handModeStarted) {
+                    stopHandStream();
+                    setStatus("手势识别已停止，请重新开启手势", "warn");
+                }
             };
             state.gestureWorker = worker;
             worker.postMessage({
@@ -1891,118 +1889,61 @@
         return state.gestureReadyPromise;
     }
 
-    function warmGestureWorker() {
-        if (state.gestureWarmupStarted || state.gestureWorkerReady || state.gestureWorkerLoading) {
-            return;
-        }
-        if (!window.Worker || window.location.protocol === "file:") {
-            return;
-        }
-
-        state.gestureWarmupStarted = true;
-        scheduleIdle(() => {
-            if (state.gestureWorkerReady || state.gestureWorkerLoading || state.handModeStarted || state.loadState !== "READY") {
-                return;
-            }
-            initializeGestureWorker().catch((error) => {
-                reportStage("gesture:warmup", error, "log");
-            });
-        }, 700);
-    }
-
-    async function startGestureMode() {
-        if (state.handModeStarted) {
-            return true;
-        }
-
-        if (state.cameraStarting) return false;
+    async function startGestureMode(deviceId) {
+        if (state.handModeStarted || state.cameraStarting) return false;
         state.cameraStarting = true;
-        let cameraRequestActive = true;
-        dom.gestureToggle.disabled = true;
+        const session = ++state.cameraSession;
         dom.gestureStartButton.disabled = true;
-        setStatus("正在检查摄像头环境");
-
+        dom.cameraSelect.disabled = true;
+        dom.gestureToggle.textContent = "取消手势";
+        dom.gestureToggle.setAttribute("aria-pressed", "true");
+        setStatus("正在请求摄像头权限");
         try {
-            if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
                 throw new Error(cameraFailureMessage());
             }
-
-            if (navigator.permissions && navigator.permissions.query) {
-                try {
-                    const permission = await navigator.permissions.query({ name: "camera" });
-                    if (permission.state === "denied") {
-                        throw Object.assign(new Error("camera denied"), { name: "NotAllowedError" });
-                    }
-                } catch (error) {
-                    if (error.name === "NotAllowedError") {
-                        throw error;
-                    }
-                }
-            }
-
-            setStatus("正在请求摄像头权限");
-            const workerReady = initializeGestureWorker().catch((error) => error);
-            const stream = await withTimeout(navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: {
-                    facingMode: "user",
-                    width: { ideal: 424 },
-                    height: { ideal: 320 },
-                    frameRate: { ideal: 24, max: 24 }
-                }
-            }).then((result) => {
-                if (!cameraRequestActive) {
-                    result.getTracks().forEach((track) => track.stop());
-                    throw new Error("摄像头请求已过期，请重试");
-                }
-                return result;
-            }), 30000, "摄像头授权等待超时，请允许权限后重试");
-
-            state.handStream = stream;
-            dom.webcam.srcObject = stream;
             dom.webcamWrap.hidden = false;
-            await Promise.all([
-                waitForVideoReady(dom.webcam),
-                withTimeout(dom.webcam.play(), 10000, "摄像头播放超时，请重试")
-            ]);
-
+            const workerReady = initializeGestureWorker().catch(error => error);
+            state.handStream = await cameraFeed.start(deviceId);
+            if (session !== state.cameraSession) return false;
             state.handModeStarted = true;
             state.lastGestureFrameAt = 0;
-            setupHandInputCanvas();
+            state.handFrameTimeouts = 0;
+            state.gestureErrorCount = 0;
+            state.lastPointerX = null;
+            state.wasActionDown = false;
             clearWebcamOverlay();
             applyCameraPerformanceProfile("gesture start");
+            void refreshCameraChoices();
             dom.gestureToggle.classList.add("is-active");
             dom.gestureToggle.textContent = "关闭手势";
             dom.gestureToggle.title = "关闭摄像头手势模式";
-            dom.gestureToggle.setAttribute("aria-pressed", "true");
-            setGestureStatus("摄像头已开", "ready", true);
-            setStatus("摄像头已开启，正在加载手势识别模型");
-            const workerResult = await withTimeout(workerReady, 45000, "手势模型加载超时，请检查网络后重试");
-            if (workerResult instanceof Error) {
-                throw workerResult;
-            }
+            setStatus("已收到摄像头画面，正在加载手势模型");
+            const result = await withTimeout(workerReady, 45000, "手势模型加载超时，请检查网络后重试");
+            if (session !== state.cameraSession) return false;
+            if (result instanceof Error) throw result;
             scheduleGestureLoop();
-            void maybeSendGestureFrame();
-            setStatus("手势识别已就绪：移动食指旋转，捏合抽取，松开释放牌灵");
+            if (cameraFeed.status === "live") {
+                setGestureStatus("请将手放入画面", "ready", true);
+                setStatus("移动食指旋转，捏合抽取，松开释放牌灵");
+            } else {
+                setGestureStatus("画面过暗", "warn", true);
+                setStatus(dom.cameraMessage.textContent, "warn");
+            }
             return true;
         } catch (error) {
-            const stage = state.handModeStarted ? "gesture:init" : "camera:getUserMedia";
-            reportStage(stage, error);
-            const cameraWasReady = state.handModeStarted;
+            if (session !== state.cameraSession) return false;
+            reportStage("camera:startup", error);
             stopHandStream();
-            const message = error.message && error.message.includes("摄像头")
-                ? error.message
-                : cameraWasReady
-                    ? `手势识别初始化失败：${error.message || error.name || "未知错误"}`
-                    : cameraFailureMessage(error);
-            setStatus(message, "warn");
-            dom.gestureToggle.textContent = "手势";
+            setStatus(cameraFailureMessage(error), "warn");
+            setGestureStatus("启动失败，可重试", "warn", true);
             return false;
         } finally {
-            cameraRequestActive = false;
-            state.cameraStarting = false;
-            dom.gestureToggle.disabled = false;
-            dom.gestureStartButton.disabled = false;
+            if (session === state.cameraSession) {
+                state.cameraStarting = false;
+                dom.gestureStartButton.disabled = false;
+                dom.cameraSelect.disabled = false;
+            }
         }
     }
 
@@ -2042,16 +1983,22 @@
         const distance = Math.max(1, Math.abs(targetZ - camera.position.z));
         const verticalWorld = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * distance;
         const horizontalWorld = verticalWorld * camera.aspect;
-        const maxByHeight = (verticalWorld * fill) / CARD_WORLD_HEIGHT;
+        const viewport = viewportMetrics();
+        const portrait = viewport.aspect < 0.85;
+        const safeFill = portrait ? Math.min(fill, Math.max(0.2, (viewport.height - 320) / viewport.height) * 0.92) : fill;
+        const maxByHeight = (verticalWorld * safeFill) / CARD_WORLD_HEIGHT;
         const maxByWidth = (horizontalWorld * 0.76) / CARD_WORLD_WIDTH;
-        return Math.max(0.62, Math.min(baseScale, maxByHeight, maxByWidth));
+        return Math.max(0.05, Math.min(baseScale, maxByHeight, maxByWidth));
     }
 
-    function updateCards(now) {
+    function updateCards(now, delta) {
+        const step = delta * 60;
+        const easing = 1 - Math.pow(0.89, step);
         if (state.loadState === "PLAYING" && !state.activeCard) {
-            state.globalAngle += state.angularVelocity;
-            state.angularVelocity *= 0.9;
-            state.globalAngle += 0.001;
+            state.globalAngle += state.angularVelocity * step;
+            state.angularVelocity *= Math.pow(0.9, step);
+            if (!REDUCED_MOTION) state.globalAngle += 0.001 * step;
+            state.globalAngle %= Math.PI * 2;
         }
 
         const activeCardCount = Math.max(8, Math.min(cards.length, quality.activeCards));
@@ -2076,7 +2023,7 @@
                     Math.sin(angle) * horizontalRadius,
                     Math.cos(angle) * quality.radius
                 ) + Math.PI;
-                card.targetRotX = pointerNDC.y !== -999 ? pointerNDC.y * (state.handModeStarted ? 0.035 : 0.08) : 0;
+                card.targetRotX = 0;
                 card.targetScaleX = quality.cardScale;
                 card.targetScaleY = quality.cardScale;
                 card.targetScaleZ = quality.cardScale;
@@ -2084,33 +2031,33 @@
                 const isReveal = card.state === "REVEALED";
                 const targetZ = isReveal ? -6.2 : -7;
                 const targetScale = fitCardScaleToViewport(isReveal ? quality.revealScale : quality.grabScale, targetZ);
-                card.targetX = isReveal ? 0 : (pointerNDC.x !== -999 ? pointerNDC.x * 1.4 : 0);
-                card.targetY = isReveal ? 0.1 : 0;
+                card.targetX = 0;
+                const viewport = viewportMetrics();
+                const verticalWorld = 2 * Math.tan(camera.fov * Math.PI / 360) * Math.abs(targetZ);
+                card.targetY = viewport.aspect < 0.85 ? verticalWorld * 40 / viewport.height : 0;
                 card.targetZ = targetZ;
-                card.targetRotX = isReveal ? 0 : (pointerNDC.y !== -999 ? pointerNDC.y * 0.28 : 0);
-                card.targetRotY = isReveal ? 0 : (pointerNDC.x !== -999 ? pointerNDC.x * 0.34 : 0);
+                card.targetRotX = 0;
+                card.targetRotY = 0;
                 card.targetScaleX = targetScale;
                 card.targetScaleY = targetScale;
                 card.targetScaleZ = targetScale;
 
-                if (isReveal && now > card.revealUntil) {
-                    card.state = "DESTROYED";
-                }
+
             }
 
             if (card.state !== "DESTROYED") {
-                card.mesh.position.x += (card.targetX - card.mesh.position.x) * 0.11;
-                card.mesh.position.y += (card.targetY - card.mesh.position.y) * 0.11;
-                card.mesh.position.z += (card.targetZ - card.mesh.position.z) * 0.11;
-                card.mesh.rotation.x += (card.targetRotX - card.mesh.rotation.x) * 0.11;
+                card.mesh.position.x += (card.targetX - card.mesh.position.x) * easing;
+                card.mesh.position.y += (card.targetY - card.mesh.position.y) * easing;
+                card.mesh.position.z += (card.targetZ - card.mesh.position.z) * easing;
+                card.mesh.rotation.x += (card.targetRotX - card.mesh.rotation.x) * easing;
 
                 let diffY = card.targetRotY - card.mesh.rotation.y;
                 diffY = Math.atan2(Math.sin(diffY), Math.cos(diffY));
-                card.mesh.rotation.y += diffY * 0.11;
+                card.mesh.rotation.y += diffY * easing;
 
-                card.currentScaleX += (card.targetScaleX - card.currentScaleX) * 0.11;
-                card.currentScaleY += (card.targetScaleY - card.currentScaleY) * 0.11;
-                card.currentScaleZ += (card.targetScaleZ - card.currentScaleZ) * 0.11;
+                card.currentScaleX += (card.targetScaleX - card.currentScaleX) * easing;
+                card.currentScaleY += (card.targetScaleY - card.currentScaleY) * easing;
+                card.currentScaleZ += (card.targetScaleZ - card.currentScaleZ) * easing;
                 card.mesh.scale.set(card.currentScaleX, card.currentScaleY, card.currentScaleZ);
             }
         }
@@ -2173,18 +2120,13 @@
 
     function applyPerformanceLevel() {
         const level = state.degradationLevel;
-        if (level === 0) {
-            return;
-        }
-
-        const particleScale = level === 1 ? 0.76 : level === 2 ? 0.56 : 0.40;
-        const cardDrop = level === 1 ? 2 : level === 2 ? 4 : 6;
-        quality.activeCherryParticles = Math.max(180, Math.floor(quality.cherryParticles * particleScale));
-        quality.activeParticles = Math.max(160, Math.floor(quality.particles * particleScale));
-        quality.activeCards = Math.max(10, quality.cards - cardDrop);
-        quality.pixelRatio = Math.max(0.85, quality.pixelRatio - 0.18);
-        dom.qualityBadge.textContent = `${quality.label}·稳帧${level}`;
-        resize();
+        const particleScale = [1, 0.76, 0.56, 0.40][level];
+        quality.activeCherryParticles = Math.max(160, Math.floor(quality.cherryParticles * particleScale));
+        quality.activeParticles = Math.max(150, Math.floor(quality.particles * particleScale));
+        quality.pixelRatio = Math.max(0.85, quality.basePixelRatio - level * 0.18);
+        dom.qualityBadge.textContent = level ? `${quality.label}·稳帧${level}` : quality.label;
+        if (state.handModeStarted) applyCameraPerformanceProfile("adaptive");
+        else resize();
     }
 
     function sampleFrameRate(now) {
@@ -2220,9 +2162,15 @@
         const delta = Math.min(clock.getDelta(), 0.05);
         const now = performance.now();
         sampleFrameRate(now);
-        updateCards(now);
+        updateCards(now, delta);
         updateEffects(delta, now);
         renderer.render(scene, camera);
+        if (focusScene.children.some(child => child.isGroup && child.visible)) {
+            renderer.autoClear = false;
+            renderer.clearDepth();
+            renderer.render(focusScene, camera);
+            renderer.autoClear = true;
+        }
     }
 
     function resize() {
@@ -2279,7 +2227,7 @@
         resize();
         setStatus("选择触摸/鼠标或摄像头手势模式");
 
-        warmGestureWorker();
+        // Load the recognition model only after the user requests gesture mode.
 
         window.__clowAppState = {
             get loadState() { return state.loadState; },
@@ -2293,6 +2241,8 @@
             get activeCherryParticles() { return quality.activeCherryParticles; },
             get activeExplosionParticles() { return quality.activeParticles; },
             get pixelRatio() { return quality.pixelRatio; },
+            get cameraStatus() { return cameraFeed.status; },
+            get cameraFrames() { return cameraFeed.frameCount || 0; },
             get gestureReady() { return state.gestureWorkerReady; },
             get gestureLoading() { return state.gestureWorkerLoading; },
             get gestureWarmupStarted() { return state.gestureWarmupStarted; },
@@ -2324,13 +2274,29 @@
     dom.touchStartButton.addEventListener("click", requestStart);
     dom.gestureStartButton.addEventListener("click", requestGestureStart);
     dom.gestureToggle.addEventListener("click", () => {
-        if (state.handModeStarted) {
+        if (state.handModeStarted || state.cameraStarting) {
             stopHandStream();
             setStatus("手势已关闭，可用触摸或鼠标操作");
         } else {
             void startGestureMode();
         }
     });
+    dom.cameraSelect.addEventListener("change", () => {
+        const deviceId = dom.cameraSelect.value;
+        stopHandStream();
+        void startGestureMode(deviceId);
+    });
+    document.addEventListener("visibilitychange", () => {
+        state.fpsWindowStart = performance.now();
+        state.frameCount = 0;
+        state.slowFrames = 0;
+        if (document.hidden && (state.handModeStarted || state.cameraStarting)) {
+            stopHandStream();
+            setStatus("页面已切到后台，摄像头已关闭；返回后可重新开启手势");
+        }
+    });
+    window.addEventListener("pagehide", stopHandStream);
+    navigator.mediaDevices?.addEventListener("devicechange", refreshCameraChoices);
     window.addEventListener("resize", resize);
     if (window.visualViewport) {
         window.visualViewport.addEventListener("resize", resize);

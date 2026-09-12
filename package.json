@@ -1,0 +1,13 @@
+{
+  "name": "dreamy-clow-cards",
+  "version": "1.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node tests/server.cjs",
+    "check": "node --check js/app.js && node --check js/camera-feed.js && node --check js/gesture-worker.js",
+    "test": "node --test --test-concurrency=1 tests/app.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
