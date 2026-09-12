@@ -24,6 +24,10 @@
     const CARD_CORNER_RADIUS = 0.16;
     const CARD_EDGE_SEGMENTS = 10;
     const RELEASE_BURST_LIGHT_MS = 820;
+    // Focus cards should visibly respond to pointer/hand direction. Keep the
+    // range below a full quarter turn so corners stay readable on small screens.
+    const FOCUS_TILT_X = 0.34;
+    const FOCUS_TILT_Y = 0.52;
     const HAS_COARSE_POINTER = window.matchMedia("(pointer: coarse)").matches;
     const HAND_FRAME_INTERVAL = 1000 / (HAS_COARSE_POINTER ? 24 : 30);
     const HAND_SAMPLE_WIDTH = HAS_COARSE_POINTER ? 224 : 256;
@@ -2082,8 +2086,8 @@
                 card.targetZ = targetZ;
                 const aimX = pointerNDC.x === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.x, -1, 1);
                 const aimY = pointerNDC.y === -999 ? 0 : THREE.MathUtils.clamp(pointerNDC.y, -1, 1);
-                card.targetRotX = isReveal ? 0 : aimY * 0.16;
-                card.targetRotY = isReveal ? 0 : aimX * 0.24;
+                card.targetRotX = aimY * FOCUS_TILT_X;
+                card.targetRotY = aimX * FOCUS_TILT_Y;
                 card.targetScaleX = targetScale;
                 card.targetScaleY = targetScale;
                 card.targetScaleZ = targetScale;
