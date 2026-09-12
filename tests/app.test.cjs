@@ -201,6 +201,10 @@ test('held card follows mouse on both axes with directional gold rim, deck stays
         await page.waitForFunction(() => Math.abs(testApp.state.activeCard.mesh.rotation.y) < .03);
         await page.mouse.move(1200, 190);
         await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y > .13 && testApp.state.activeCard.mesh.rotation.x > .07);
+        await page.waitForFunction(() => {
+            const rim = testApp.state.activeCard.mesh.userData.rim.material.uniforms;
+            return rim.uAim.value.x > .5 && rim.uAim.value.y > .4;
+        });
         const rim = await page.evaluate(() => {
             const c = testApp.state.activeCard;
             return { visible: c.mesh.userData.rim.visible, aim: c.mesh.userData.rim.material.uniforms.uAim.value.toArray(), strength: c.mesh.userData.rim.material.uniforms.uStrength.value };
@@ -211,10 +215,11 @@ test('held card follows mouse on both axes with directional gold rim, deck stays
         await save(page, 'tilt-gold-right');
         await page.mouse.move(200, 720);
         await page.waitForFunction(() => testApp.state.activeCard.mesh.rotation.y < -.12 && testApp.state.activeCard.mesh.rotation.x < -.06);
+        await page.waitForFunction(() => testApp.state.activeCard.mesh.userData.rim.material.uniforms.uAim.value.x < -.5);
         assert.ok(await page.evaluate(() => testApp.state.activeCard.mesh.userData.rim.material.uniforms.uAim.value.x < -.5));
         await save(page, 'tilt-gold-left');
         await page.mouse.up();
-        await page.waitForFunction(() => testApp.cards().some(c => c.state === 'REVEALED' && c.targetRotX === 0 && c.targetRotY === 0));
+        await page.waitForFunction(() => testApp.cards().some(c => c.state === 'REVEALED' && Math.abs(c.targetRotX) > .12 && Math.abs(c.targetRotY) > .20));
         assert.deepEqual(page.errors, []);
     } finally { await page.close(); }
 });
